@@ -458,7 +458,7 @@ def jurik_moving_average(dataframe, length=20, phase=50, power=2, source='close'
     try:
         df = dataframe.copy()
         # Initialize necessary columns and constants
-        df['sysstra'] = df[source]  # By default, using 'close' as the source
+        df['jma_src'] = df[source]  # By default, using 'close' as the source
         phase_ratio = np.where(phase < -100, 0.5, np.where(phase > 100, 2.5, phase / 100 + 1.5))
 
         beta = 0.45 * (length - 1) / (0.45 * (length - 1) + 2)
@@ -472,8 +472,8 @@ def jurik_moving_average(dataframe, length=20, phase=50, power=2, source='close'
 
         # Calculate JMA
         for i in range(1, len(df)):
-            df.at[i, 'e0'] = (1 - alpha) * df.at[i, 'sysstra'] + alpha * df.at[i - 1, 'e0']
-            df.at[i, 'e1'] = (df.at[i, 'sysstra'] - df.at[i, 'e0']) * (1 - beta) + beta * df.at[i - 1, 'e1']
+            df.at[i, 'e0'] = (1 - alpha) * df.at[i, 'jma_src'] + alpha * df.at[i - 1, 'e0']
+            df.at[i, 'e1'] = (df.at[i, 'jma_src'] - df.at[i, 'e0']) * (1 - beta) + beta * df.at[i - 1, 'e1']
             df.at[i, 'e2'] = (df.at[i, 'e0'] + phase_ratio * df.at[i, 'e1'] - df.at[i - 1, 'jma']) * (1 - alpha) ** 2 + (alpha ** 2) * df.at[i - 1, 'e2']
             df.at[i, 'jma'] = df.at[i, 'e2'] + df.at[i - 1, 'jma']
 
