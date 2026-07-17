@@ -1,0 +1,27 @@
+# Python bytecode and test artifacts
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments and local configuration
+.venv/
+venv/
+.env
+
+# IDE / OS / tooling
+.idea/
+.vscode/
+.DS_Store
+.codegraph/
+logs/
+*.log
+

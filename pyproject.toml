@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trigerr"
+version = "0.1.0"
+description = "Python tools for quantitative trading research and analysis."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Anurag Singh Kushwah" },
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "requests",
+    "numpy>=1.26.0",
+    "pandas>=2.0.0",
+    "redis==5.0.8",
+    "pymongo>=4.0",
+    "numba>=0.57",
+    "tqdm>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["trigerr*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
