@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trigerr"
-version = "0.1.0"
+# Version is single-sourced from trigerr/__init__.py's __version__ —
+# bump it there only; the build reads it via the dynamic attr below.
+dynamic = ["version"]
 description = "Python tools for quantitative trading research and analysis."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +39,9 @@ dev = [
     "build>=1.2",
     "pytest>=7.0",
 ]
+
+[tool.setuptools.dynamic]
+version = {attr = "trigerr.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["trigerr*"]
