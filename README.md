@@ -18,10 +18,10 @@ Trigerr supports Python 3.10 and newer.
 ## Installation
 
 ```bash
-pip install -e .
+pip install trigerr
 ```
 
-For local development:
+For local development from a checkout:
 
 ```bash
 pip install -e ".[dev]"
@@ -45,8 +45,9 @@ Do not use real trading credentials in examples, tests, or committed files.
 
 ## Roadmap
 
-See [TRIGERR_MIGRATION_PLAN.md](TRIGERR_MIGRATION_PLAN.md) for the phased
-migration plan.
+The near-term focus is stabilizing the offline analysis core (indicators,
+utilities, backtesting) and reshaping the network-connected data and order
+integrations into optional adapters.
 
 ## License
 
