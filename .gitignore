@@ -25,3 +25,4 @@ venv/
 logs/
 *.log
 
+.aider*
