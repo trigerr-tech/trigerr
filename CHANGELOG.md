@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-07-20
+
+### Added
+- `trigerr.logging_utils`: shared stdlib-only structured (JSON-line) logging —
+  `get_logger()`, context propagation (`bind`/`bound`/`clear_context`/`get_context`),
+  a credential-scrubbing log filter, and `redirect_stdout_to()` to capture existing
+  `print()` call sites without editing them. Part of the platform's centralized
+  logging rollout.
+- `orders/live.py`: `place_live_order`, `modify_live_order`, `check_order_status`,
+  and `poll_order_status` accept optional `request_id`/`user_id`/`strategy_id`,
+  falling back to the ambient logging context when not passed explicitly, so
+  order calls made from a bound context are automatically correlated end to end
+  with the receiving OMS. Fields are omitted from the request body when unset —
+  fully backward compatible with OMS deployments on older SDK versions.
+
+---
+
 ## [0.1.4.4.1] - 2026-05-06
 
 ### Added

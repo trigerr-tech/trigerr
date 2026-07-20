@@ -1,6 +1,7 @@
 from trigerr.orders import add_order_to_redis, fetch_orders_list
 from trigerr.utils import send_order_alert
 from trigerr.config import config, get_auth_headers
+from trigerr.logging_utils import get_context
 import requests
 from urllib.parse import urljoin
 import datetime
@@ -152,12 +153,27 @@ def save_lt_trade(app_db_cursor, redis_cursor, trade_dict):
         pass
 
 
-def place_live_order(credential_id, order_details):
+def _add_correlation_fields(request_dict, request_id=None, user_id=None, strategy_id=None):
+    """Adds request_id/user_id/strategy_id to an OMS request body, falling
+    back to the ambient logging context (set by callers via
+    trigerr.logging_utils.bind()/bound()) when not passed explicitly. Fields
+    are omitted entirely when neither source provides a value, so older OMS
+    deployments that don't expect them are unaffected."""
+    ctx = get_context()
+    for key, value in (("request_id", request_id), ("user_id", user_id), ("strategy_id", strategy_id)):
+        value = value if value is not None else ctx.get(key)
+        if value is not None:
+            request_dict[key] = str(value)
+    return request_dict
+
+
+def place_live_order(credential_id, order_details, request_id=None, user_id=None, strategy_id=None):
     """Function to place live trade order via REST API"""
     try:
         print("Placing Live Trade Order")
-        request_dict = {"credential_id": str(credential_id),
-                        "order_params": order_details}
+        request_dict = _add_correlation_fields(
+            {"credential_id": str(credential_id), "order_params": order_details},
+            request_id, user_id, strategy_id)
         print(f"request_dict : {request_dict}")
 
         response = requests.post(url=urljoin(orders_url, "place_order"), json=request_dict, headers=get_auth_headers())
@@ -169,12 +185,13 @@ def place_live_order(credential_id, order_details):
         return None
 
 
-def modify_live_order(credential_id, order_details):
+def modify_live_order(credential_id, order_details, request_id=None, user_id=None, strategy_id=None):
     """Function to Modify Live Order"""
     try:
         print("* Modifying Live Order")
-        request_dict = {"credential_id": str(credential_id),
-                        "order_params": order_details}
+        request_dict = _add_correlation_fields(
+            {"credential_id": str(credential_id), "order_params": order_details},
+            request_id, user_id, strategy_id)
         print(f"request_dict : {request_dict}")
 
         response = requests.post(url=urljoin(orders_url, "modify_order"), json=request_dict, headers=get_auth_headers())
@@ -186,17 +203,19 @@ def modify_live_order(credential_id, order_details):
         pass
 
 
-def check_order_status(credential_id, order_id, exchange):
+def check_order_status(credential_id, order_id, exchange, request_id=None, user_id=None, strategy_id=None):
     """Function to fetch current order status"""
     try:
         print("Fetching Order Status")
-        request_dict = {
-            "credential_id": str(credential_id),
-            "order_params": {
-                'order_id': order_id,
-                "exchange": exchange
-            }
-        }
+        request_dict = _add_correlation_fields(
+            {
+                "credential_id": str(credential_id),
+                "order_params": {
+                    'order_id': order_id,
+                    "exchange": exchange
+                }
+            },
+            request_id, user_id, strategy_id)
         # last_order = requests.post(url=orders_url+"get_order_by_id", params={"credential_id": credential_id, 'order_details': json.dumps(get_order_params)}).json()
         last_order = requests.post(url=urljoin(orders_url, "check_order_status"), json=request_dict, headers=get_auth_headers()).json()
         print(f"order_status_response : {last_order}")
@@ -214,15 +233,15 @@ def check_order_status(credential_id, order_id, exchange):
         return "failed", None
 
 
-def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, sleep_interval=1):
+def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, sleep_interval=1,
+                       request_id=None, user_id=None, strategy_id=None):
     """ Function to poll order status until terminal state is reached """
     order_response = None
     try:
         print(f"Polling Order Status for order_id: {order_id}")
-        request_dict = {
-            "credential_id": str(credential_id),
-            "order_params": {'order_id': order_id, "exchange": exchange}
-        }
+        request_dict = _add_correlation_fields(
+            {"credential_id": str(credential_id), "order_params": {'order_id': order_id, "exchange": exchange}},
+            request_id, user_id, strategy_id)
         start_time = time.time()
         retry_count = 0
 
