@@ -6,6 +6,7 @@ import itertools
 import traceback as tb
 import requests
 from trigerr import ta as TA
+from trigerr.config import get_auth_headers
 from urllib.parse import urljoin
 
 orders_url = config.get('orders_url')
@@ -1391,7 +1392,7 @@ def fetch_available_funds(credential_id):
     """Function to fetch current available funds in the account"""
     try:
         print(f"***** Fetching Available Funds for : {credential_id} *****")
-        response = requests.post(urljoin(orders_url, "get_broker_fund"), json={"credential_id": credential_id})
+        response = requests.post(urljoin(orders_url, "get_broker_fund"), json={"credential_id": credential_id}, headers=get_auth_headers())
         response_dict = response.json()
         if response_dict["status"] == "SUCCESS" and response_dict["message"] == "Fund Found":
             fund_available = response_dict["data"]["net_balance"]
@@ -1431,7 +1432,7 @@ def send_order_alert(alert_dict):
     """Function to Send Alert on Order"""
     try:
         print("Sending Alert")
-        response = requests.post(url=urljoin(orders_url, "send_notification"), json=alert_dict)
+        response = requests.post(url=urljoin(orders_url, "send_notification"), json=alert_dict, headers=get_auth_headers())
         print("response : {}".format(response.json()))
     except Exception as e:
         print("Exception in sending alert : {}".format(e))

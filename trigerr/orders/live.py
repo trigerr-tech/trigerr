@@ -1,6 +1,6 @@
 from trigerr.orders import add_order_to_redis, fetch_orders_list
 from trigerr.utils import send_order_alert
-from trigerr.config import config
+from trigerr.config import config, get_auth_headers
 import requests
 from urllib.parse import urljoin
 import datetime
@@ -160,7 +160,7 @@ def place_live_order(credential_id, order_details):
                         "order_params": order_details}
         print(f"request_dict : {request_dict}")
 
-        response = requests.post(url=urljoin(orders_url, "place_order"), json=request_dict)
+        response = requests.post(url=urljoin(orders_url, "place_order"), json=request_dict, headers=get_auth_headers())
         print("******** Order Placement Response *********")
         print(response.json())
         return response.json()
@@ -177,7 +177,7 @@ def modify_live_order(credential_id, order_details):
                         "order_params": order_details}
         print(f"request_dict : {request_dict}")
 
-        response = requests.post(url=urljoin(orders_url, "modify_order"), json=request_dict)
+        response = requests.post(url=urljoin(orders_url, "modify_order"), json=request_dict, headers=get_auth_headers())
         print("******** Order Placement Response *********")
         print(response.json())
         return response.json()
@@ -198,7 +198,7 @@ def check_order_status(credential_id, order_id, exchange):
             }
         }
         # last_order = requests.post(url=orders_url+"get_order_by_id", params={"credential_id": credential_id, 'order_details': json.dumps(get_order_params)}).json()
-        last_order = requests.post(url=urljoin(orders_url, "check_order_status"), json=request_dict).json()
+        last_order = requests.post(url=urljoin(orders_url, "check_order_status"), json=request_dict, headers=get_auth_headers()).json()
         print(f"order_status_response : {last_order}")
 
         if last_order["status"] == "COMPLETED":
@@ -227,7 +227,7 @@ def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, 
         retry_count = 0
 
         while time.time() - start_time < max_wait_seconds:  # Poll indefinitely until terminal state
-            order_response = requests.post(url=urljoin(orders_url, "check_order_status"), json=request_dict).json()
+            order_response = requests.post(url=urljoin(orders_url, "check_order_status"), json=request_dict, headers=get_auth_headers()).json()
 
             current_status = order_response.get("status")
 
