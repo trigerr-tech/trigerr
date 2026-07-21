@@ -98,3 +98,32 @@ def test_place_live_order_still_sends_auth_headers():
     finally:
         import trigerr
         trigerr.config["api_key"] = None
+
+
+def test_validate_credential_success():
+    with patch("trigerr.orders.live.requests.post") as mock_post:
+        mock_post.return_value = _mock_response({"status": "SUCCESS", "message": "ok"})
+        status, message = live.validate_credential(credential_id="cred-1")
+
+    assert status == "success"
+    assert message == "ok"
+    sent_body = mock_post.call_args.kwargs["json"]
+    assert sent_body == {"credential_id": "cred-1"}
+
+
+def test_validate_credential_error():
+    with patch("trigerr.orders.live.requests.post") as mock_post:
+        mock_post.return_value = _mock_response({"status": "ERROR", "message": "bad credential"})
+        status, message = live.validate_credential(credential_id="cred-1")
+
+    assert status == "error"
+    assert message == "bad credential"
+
+
+def test_validate_credential_never_sends_credential_values():
+    with patch("trigerr.orders.live.requests.post") as mock_post:
+        mock_post.return_value = _mock_response({"status": "SUCCESS"})
+        live.validate_credential(credential_id="cred-1")
+
+    sent_body = mock_post.call_args.kwargs["json"]
+    assert set(sent_body.keys()) == {"credential_id"}

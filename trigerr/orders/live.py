@@ -289,3 +289,20 @@ def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, 
     except Exception as e:
         print(f"Exception in Poll Order Status Function: {e}")
         return "failed", order_response
+
+
+def validate_credential(credential_id):
+    """Ask OMS to check a broker credential is live (real broker call on its
+    side) without ever handling the plaintext credential values here.
+    Returns (status, message) — status is "success" or "error"."""
+    try:
+        print(f"Validating broker credential: {credential_id}")
+        response = requests.post(url=urljoin(orders_url, "validate_broker_credentials"),
+                                 json={"credential_id": str(credential_id)},
+                                 headers=get_auth_headers()).json()
+        if response.get("status") == "SUCCESS":
+            return "success", response.get("message")
+        return "error", response.get("message")
+    except Exception as e:
+        print(f"Exception in Validate Credential Function: {e}")
+        return "error", str(e)

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-07-21
+
+### Added
+- `trigerr.crypto_utils`: shared envelope encryption (Fernet/MultiFernet) for
+  broker credential values — `load_key()`, `encrypt_input()`/`decrypt_input()`,
+  `is_encrypted()`. Used by trigerr-oms and trigerr-broker-automation so
+  `broker_credentials` is encrypted at rest with one shared, correct
+  implementation instead of two independent ones.
+- `orders/live.py`: `validate_credential(credential_id)` — thin wrapper for
+  OMS's `/validate_broker_credentials`, letting callers (the trading engine)
+  check a credential is live before dispatching a run, without ever handling
+  plaintext credential values themselves.
+
+---
+
 ## [0.2.0] - 2026-07-20
 
 ### Added
