@@ -18,6 +18,8 @@ options-greeks/IV data source nothing in this codebase provides yet — it is
 deliberately not stubbed with fabricated behavior; add it when that data
 source exists. """
 
+import datetime
+
 from trigerr.utils import round_strike_price
 
 
@@ -66,6 +68,18 @@ def _resolve_strike_offset_option(ctx, leg):
     leg["lot_size"] = leg.get("lot_size", int(str(ctx["symbols_dict"]["lot_size"])))
 
 
+def _resolve_atm_option_near_month(ctx, leg):
+    """ Same as atm_option, but appends "_near" once past the 20th of the
+    month (strat_sha_edol's own monthly-contract-rollover convention for
+    DELIVERY/multi-day positions — a real, wall-clock-dependent quirk in the
+    legacy file itself, not something a replayable feed drives, so this
+    reads the wall clock too rather than inventing a backtestable substitute
+    legacy doesn't have). """
+    _resolve_atm_option(ctx, leg)
+    if datetime.datetime.today().date().day >= 20:
+        leg["exit_symbol"] = f"{leg['exit_symbol']}_near"
+
+
 INSTRUMENT_SELECTORS = {
     "spot":                 {"resolve": _resolve_spot,
                               "spec": {"label": "Underlying spot/cash", "params": []}},
@@ -76,6 +90,9 @@ INSTRUMENT_SELECTORS = {
     "strike_offset_option": {"resolve": _resolve_strike_offset_option,
                               "spec": {"label": "Strike offset from ATM",
                                        "params": ["option_type", "direction", "offset"]}},
+    "atm_option_near_month": {"resolve": _resolve_atm_option_near_month,
+                              "spec": {"label": "At-the-money option (near-month past the 20th)",
+                                       "params": ["option_type"]}},
 }
 
 
@@ -95,7 +112,7 @@ def resolve_leg_to_tradable_symbol(ctx, leg):
 
 def resolve_exchange_for_leg(exchange, selector):
     """ NSE/BSE cash exchanges route F&O legs to their derivatives segment. """
-    derivative = selector in ("futures", "atm_option", "strike_offset_option")
+    derivative = selector in ("futures", "atm_option", "strike_offset_option", "atm_option_near_month")
     if exchange == "XNSE":
         return "NFO" if derivative else "NSE"
     if exchange == "XBSE":

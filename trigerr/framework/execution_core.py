@@ -174,6 +174,7 @@ def place_entry_order_for_leg(ctx, leg):
             params=leg["order_params"])
         leg["entry_time"] = _as_datetime(orders_list[-1]["order_timestamp"])
         leg["tradingsymbol"] = orders_list[-1]["tradingsymbol"]
+        leg["db_order_id"] = orders_list[-1].get("db_order_id")
         ctx["orders_list"] = orders_list
 
     else:
@@ -223,6 +224,7 @@ def place_entry_order_for_leg(ctx, leg):
             max_qpo=ctx["symbols_dict"].get("max_qpo"), market=ctx["market"])
         leg["entry_time"] = _as_datetime(live_response["timestamp"])
         leg["tradingsymbol"] = order_candle["symbol"]
+        leg["db_order_id"] = orders_list[-1].get("db_order_id")
         ctx["orders_list"] = orders_list
 
     ctx["legs"][leg["leg_key"]] = leg
