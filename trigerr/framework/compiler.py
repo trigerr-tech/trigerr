@@ -27,6 +27,14 @@ _MODULE_ATTR_MAP = {
 _PARAM_TYPE_MAP = {"int": "Number", "float": "Number", "bool": "Boolean"}
 
 
+def _node_ctx(node):
+    """ A node's "ctx" dict ({"feed", "offset", ...}), tolerant of it being
+    absent or some non-object JSON value entirely (task #99) - read by every
+    stage of the pipeline, so fixed once here rather than at each call site. """
+    ctx = node.get("ctx")
+    return ctx if isinstance(ctx, dict) else {}
+
+
 # ---------------------------------------------------------------------------
 # Stage 1 — normalize
 # ---------------------------------------------------------------------------
@@ -38,7 +46,8 @@ def _desugar_expr(node):
     if isinstance(node, dict) and "op" in node:
         desugared = dict(node)
         if "args" in desugared:
-            desugared["args"] = [_desugar_expr(a) for a in desugared["args"]]
+            args = desugared["args"]
+            desugared["args"] = [_desugar_expr(a) for a in args] if isinstance(args, list) else []
         return desugared
     if isinstance(node, str) and node.startswith("$"):
         return {"op": "param", "name": node[1:]}
@@ -48,7 +57,10 @@ def _desugar_expr(node):
 def normalize(source):
     """ Accepts a Python module (module-level META/PARAMETERS/FEEDS/... names)
     or a plain dict already shaped like the canonical AST. Returns a fresh
-    canonical dict; never mutates the input. """
+    canonical dict; never mutates the input. Adversarial/malformed input
+    (task #99) is coerced to a safe default with a readable error rather than
+    left to crash a later stage - every top-level block here must be a dict
+    (a JSON payload can trivially send "entry": "garbage" or "entry": null). """
     if isinstance(source, dict):
         raw = source
     else:
@@ -57,14 +69,20 @@ def normalize(source):
             if hasattr(source, attr):
                 raw[key] = getattr(source, attr)
 
-    ast = {key: (raw.get(key, default.copy() if isinstance(default, dict) else default))
-           for key, default in _TOP_LEVEL_DEFAULTS.items()}
+    errors = []
+    ast = {}
+    for key, default in _TOP_LEVEL_DEFAULTS.items():
+        value = raw.get(key, default.copy() if isinstance(default, dict) else default)
+        if isinstance(default, dict) and not isinstance(value, dict):
+            errors.append(f"'{key}' must be an object, got {type(value).__name__}")
+            value = default.copy()
+        ast[key] = value
     ast["variables"] = {name: _desugar_expr(expr) for name, expr in ast["variables"].items()}
     entry = dict(ast["entry"])
     if entry.get("when") is not None:
         entry["when"] = _desugar_expr(entry["when"])
     ast["entry"] = entry
-    ast["_errors"] = []
+    ast["_errors"] = errors
     return ast
 
 
@@ -75,8 +93,10 @@ def normalize(source):
 def _inline_variables(node, variables, stack, errors):
     if not (isinstance(node, dict) and "op" in node):
         return node
-    if node["op"] == "ref" and not node.get("ctx", {}).get("feed"):
-        name = node["name"]
+    if node["op"] == "ref" and not _node_ctx(node).get("feed"):
+        name = node.get("name")
+        if not isinstance(name, str):
+            return node
         if name in variables:
             if name in stack:
                 errors.append(f"cycle in variables: {' -> '.join(stack + [name])}")
@@ -107,7 +127,8 @@ def topological_feed_order(feeds, errors=None):
         if name not in feeds:
             return
         visiting.add(name)
-        base = feeds[name].get("derive")
+        spec = feeds[name]
+        base = spec.get("derive") if isinstance(spec, dict) else None
         if base:
             visit(base, stack + [name])
         visiting.discard(name)
@@ -147,26 +168,42 @@ def _literal_type(value):
     return "Time"
 
 
+def _param_spec_type(ast, name):
+    """ A parameter's declared "type" (int/float/bool/...), tolerant of a
+    malformed spec that isn't itself an object - the spec is user-authored
+    data (task #99), same as everything else in PARAMETERS. """
+    param_spec = ast["parameters"].get(name, {})
+    if not isinstance(param_spec, dict):
+        param_spec = {}
+    return _PARAM_TYPE_MAP.get(param_spec.get("type"), "Number")
+
+
 def _infer_node_type(node, ast, errors):
     op = node.get("op")
     if op == "lit":
-        return {**node, "type": _literal_type(node["value"])}
+        return {**node, "type": _literal_type(node.get("value"))}
     if op == "param":
-        param_spec = ast["parameters"].get(node["name"], {})
-        return {**node, "type": _PARAM_TYPE_MAP.get(param_spec.get("type"), "Number")}
+        name = node.get("name")
+        if not isinstance(name, str):
+            errors.append(f"param node missing required 'name': {name!r}")
+            return {**node, "type": None}
+        return {**node, "type": _param_spec_type(ast, name)}
     if op == "ref":
-        feed_name = node.get("ctx", {}).get("feed")
+        feed_name = _node_ctx(node).get("feed")
         if feed_name:
             return {**node, "type": "Series"}
-        if node["name"] in ast["parameters"]:
-            param_type = _PARAM_TYPE_MAP.get(ast["parameters"][node["name"]].get("type"), "Number")
-            return {**node, "type": param_type}
-        errors.append(f"unknown reference: {node['name']}")
+        name = node.get("name")
+        if not isinstance(name, str):
+            errors.append(f"ref node missing required 'name': {name!r}")
+            return {**node, "type": None}
+        if name in ast["parameters"]:
+            return {**node, "type": _param_spec_type(ast, name)}
+        errors.append(f"unknown reference: {name}")
         return {**node, "type": None}
     if op == "native":
         return {**node, "type": node.get("type")}
-    if op not in EXPRESSION_OPS:
-        errors.append(f"unknown op: {op}")
+    if not isinstance(op, str) or op not in EXPRESSION_OPS:
+        errors.append(f"unknown op: {op!r}")
         return {**node, "type": None}
 
     op_spec = EXPRESSION_OPS[op]
@@ -194,15 +231,23 @@ def infer_types(ast):
 # Stage 4 — infer_subscriptions
 # ---------------------------------------------------------------------------
 
+def _reads_list(node):
+    """ A native node's declared "reads" list, tolerant of it being absent,
+    explicitly null, or some non-list JSON value entirely (task #99) - all
+    three are otherwise-crashing shapes a raw JSON payload can send. """
+    reads = node.get("reads") or []
+    return reads if isinstance(reads, list) else []
+
+
 def _collect_subscriptions(node, subscriptions):
     if not (isinstance(node, dict) and "op" in node):
         return
     if node["op"] == "ref":
-        feed_name = node.get("ctx", {}).get("feed")
-        if feed_name:
+        feed_name = _node_ctx(node).get("feed")
+        if isinstance(feed_name, str) and feed_name:
             subscriptions.add(feed_name)
     if node["op"] == "native":
-        subscriptions.update(node.get("reads", []))
+        subscriptions.update(_reads_list(node))
     for arg in node.get("args", []):
         _collect_subscriptions(arg, subscriptions)
 
@@ -212,7 +257,7 @@ def infer_subscriptions(ast):
     "the user never configures subscriptions manually." Returns the set (also
     threaded through the ast as "_subscriptions" for validate/lower). """
     subscriptions = set()
-    if ast["clock"]:
+    if ast["clock"] and isinstance(ast["clock"], str):
         subscriptions.add(ast["clock"])
     for expr in ast["variables"].values():
         _collect_subscriptions(expr, subscriptions)
@@ -238,9 +283,9 @@ def _collect_offset_violations(node, errors):
     if not (isinstance(node, dict) and "op" in node):
         return
     if node["op"] == "ref":
-        offset = node.get("ctx", {}).get("offset", 0)
-        if offset and offset > 0:
-            errors.append(f"lookahead: ref {node['name']} has a future offset ({offset})")
+        offset = _node_ctx(node).get("offset", 0)
+        if isinstance(offset, (int, float)) and not isinstance(offset, bool) and offset > 0:
+            errors.append(f"lookahead: ref {node.get('name')} has a future offset ({offset})")
     for arg in node.get("args", []):
         _collect_offset_violations(arg, errors)
 
@@ -252,6 +297,8 @@ def validate(ast):
 
     if ast["clock"] is None:
         errors.append("no clock feed declared")
+    elif not isinstance(ast["clock"], str):
+        errors.append(f"clock must be a feed name (string), got {type(ast['clock']).__name__}")
     elif ast["clock"] not in ast["feeds"]:
         errors.append(f"clock feed '{ast['clock']}' is not declared in feeds")
 
@@ -260,7 +307,20 @@ def validate(ast):
         if feed_name not in ast["feeds"]:
             errors.append(f"referenced feed '{feed_name}' is not declared in feeds")
 
-    leg_keys = [leg.get("leg_key") for leg in ast["entry"].get("legs", [])]
+    legs = ast["entry"].get("legs", [])
+    if not isinstance(legs, list):
+        errors.append(f"entry.legs must be a list, got {type(legs).__name__}")
+        legs = []
+    leg_keys = []
+    for leg in legs:
+        if not isinstance(leg, dict):
+            errors.append(f"entry.legs contains a non-object leg: {leg!r}")
+            continue
+        leg_key = leg.get("leg_key")
+        if leg_key is not None and not isinstance(leg_key, (str, int, float, bool)):
+            errors.append(f"leg_key must be a simple value (string), got {leg_key!r}")
+            continue
+        leg_keys.append(leg_key)
     for leg_key in set(leg_keys):
         if leg_keys.count(leg_key) > 1:
             errors.append(f"duplicate leg_key: {leg_key}")
@@ -271,9 +331,10 @@ def validate(ast):
         native_nodes = []
         _collect_native_nodes(when, native_nodes)
         for node in native_nodes:
-            if node.get("plugin") not in ast["native_plugins"]:
-                errors.append(f"native node references undeclared plugin: {node.get('plugin')}")
-            for feed_name in node.get("reads", []):
+            plugin_name = node.get("plugin")
+            if not isinstance(plugin_name, str) or plugin_name not in ast["native_plugins"]:
+                errors.append(f"native node references undeclared plugin: {plugin_name}")
+            for feed_name in _reads_list(node):
                 if feed_name not in ast["feeds"]:
                     errors.append(f"native plugin '{node.get('plugin')}' reads undeclared feed: {feed_name}")
 
@@ -285,8 +346,13 @@ def validate(ast):
         # an empty declared set as "no leg is valid" would false-positive on
         # every one of its exit rules.
         for rule in ast["exit"].get("rules", []):
+            if not isinstance(rule, dict):
+                errors.append(f"exit rule is not an object: {rule!r}")
+                continue
             target = rule.get("legs", "ALL")
-            if target != "ALL" and not isinstance(target, list) and target not in declared_leg_keys:
+            if (target != "ALL" and not isinstance(target, list)
+                    and isinstance(target, (str, int, float, bool))
+                    and target not in declared_leg_keys):
                 errors.append(f"exit rule targets undeclared leg: {target}")
 
     return errors
@@ -350,12 +416,22 @@ def resolve_parameter_references(block, parameter_values):
 def compile_strategy(source):
     """ Runs the full pipeline. Returns (execution_plan, errors) — errors is
     empty on success and execution_plan is None on failure. Never raises for
-    an invalid strategy; that's what the returned errors list is for. """
-    ast = normalize(source)
-    ast = resolve(ast)
-    ast = infer_types(ast)
-    ast["_subscriptions"] = infer_subscriptions(ast)
-    errors = validate(ast)
+    an invalid strategy; that's what the returned errors list is for.
+
+    The RecursionError guard (task #99) covers the one adversarial-input class
+    the per-node dict/list type checks above can't: every stage here walks the
+    expression tree recursively with no depth limit, so a pathologically deep
+    "not(not(not(...)))" tree (unconstructable by a real UI, but trivial to
+    send as raw JSON) blows the Python call stack rather than producing a
+    validation error. """
+    try:
+        ast = normalize(source)
+        ast = resolve(ast)
+        ast = infer_types(ast)
+        ast["_subscriptions"] = infer_subscriptions(ast)
+        errors = validate(ast)
+    except RecursionError:
+        return None, ["strategy definition is too deeply nested to compile"]
     if errors:
         return None, errors
     return lower(ast), []
