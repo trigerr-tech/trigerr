@@ -364,6 +364,46 @@ def test_rebuild_legs_falls_back_to_option_type_when_no_leg_key_saved():
     assert "PE" in ctx["legs"]
 
 
+def test_rebuild_legs_calls_plugin_on_restart_hook():
+    """ rebuild_legs_from_open_orders only ports the generic leg shape (task
+    #93) - a plugin that stashed its own state onto the order via
+    params_extra (a custom exit ladder, a TSL plugin's db_order_id) restores
+    it via an on_restart(ctx, leg, order) hook, called once per rebuilt leg
+    after the generic leg dict is built. """
+    calls = []
+
+    class Plugin:
+        def on_restart(self, ctx, leg, order):
+            calls.append((leg["leg_key"], order["custom_field"]))
+            leg["custom_field"] = order["custom_field"]
+
+    ctx = _base_ctx(FakeState(), mode="vt")
+    ctx["plugin"] = Plugin()
+    open_orders = {"SYM_CE": {"leg_key": "CE", "option_type": "CE", "position_type": "LONG",
+                              "quantity_left": 10, "trigger_price": 50,
+                              "order_timestamp": "2026-01-01 09:20:00", "custom_field": 42}}
+    ec.rebuild_legs_from_open_orders(ctx, open_orders)
+    assert calls == [("CE", 42)]
+    assert ctx["legs"]["CE"]["custom_field"] == 42
+
+
+def test_rebuild_legs_without_plugin_or_on_restart_does_not_crash():
+    """ Most plugins (eios, straddle, dummy...) declare no on_restart -
+    the hook must be optional, matching every other escape-hatch function's
+    getattr(plugin, name, None) contract. """
+    ctx = _base_ctx(FakeState(), mode="vt")
+    ctx["plugin"] = types.SimpleNamespace()  # no on_restart attribute
+    open_orders = {"SYM_CE": {"leg_key": "CE", "option_type": "CE", "position_type": "LONG",
+                              "quantity_left": 10, "trigger_price": 50,
+                              "order_timestamp": "2026-01-01 09:20:00"}}
+    ec.rebuild_legs_from_open_orders(ctx, open_orders)
+    assert "CE" in ctx["legs"]
+
+    ctx2 = _base_ctx(FakeState(), mode="vt")  # no ctx["plugin"] key at all
+    ec.rebuild_legs_from_open_orders(ctx2, open_orders)
+    assert "CE" in ctx2["legs"]
+
+
 # ---------------------------------------------------------------------------
 # apply_compounding_to_investment
 # ---------------------------------------------------------------------------

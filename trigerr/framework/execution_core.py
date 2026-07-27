@@ -521,7 +521,15 @@ def monitor_open_position(ctx):
 def rebuild_legs_from_open_orders(ctx, open_orders):
     """ Reconstructs ctx["legs"] from a previous run's open orders, keyed by
     the explicit "leg_key" persisted on each order document — not inferred
-    from option_type, which collided for two same-type legs (defect #3). """
+    from option_type, which collided for two same-type legs (defect #3).
+
+    Only ports the generic leg shape every plugin shares. A plugin that
+    stashes its own state onto the order via params_extra (edol's dual
+    spot/option exit ladders; a TSL plugin's db_order_id) must declare
+    on_restart(ctx, leg, order) to restore it — this function has no way to
+    know which extra keys matter to a given plugin. """
+    plugin = ctx.get("plugin")
+    on_restart = getattr(plugin, "on_restart", None)
     for tradingsymbol, order in open_orders.items():
         leg_key = order.get("leg_key") or order.get("option_type") or tradingsymbol
         sl_price = order.get("trailing_sl") if ctx["mode"] == "vt" else order.get("sl_price", order.get("trailing_sl"))
@@ -541,6 +549,8 @@ def rebuild_legs_from_open_orders(ctx, open_orders):
             "order_params": {k: order[k] for k in ("underlying", "spot_price", "investment") if k in order},
         }
         ctx["legs"][leg_key] = leg
+        if on_restart:
+            on_restart(ctx, leg, order)
         if order.get("spot_price"):
             ctx["entry_spot"] = order["spot_price"]
     ctx["restarted"] = True
