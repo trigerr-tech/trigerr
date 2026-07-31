@@ -155,12 +155,20 @@ def test_json_formatter_emits_required_keys():
     assert payload["ts"].endswith("Z")
 
 
-def test_json_formatter_omits_unset_context_keys():
+def test_json_formatter_omits_unset_domain_keys():
+    """ Domain fields stay absent when unset — padding them would make "the
+    OMS has no such concept" indistinguishable from "this line failed to
+    populate it".
+
+    `tenant` used to be asserted here too. It is now part of the identity
+    block, so it is present-but-blank instead: a consumer can select it
+    without first knowing whether the writing service is tenant-aware. """
     logger = logging.getLogger("test-schema-2")
     formatter = lu.JsonFormatter("oms")
     payload = _format_one(logger, formatter)
-    for key in ("request_id", "order_id", "credential_id", "tenant"):
+    for key in ("request_id", "order_id", "credential_id"):
         assert key not in payload
+    assert payload["tenant"] == ""
 
 
 def test_json_formatter_includes_bound_context_and_extra():

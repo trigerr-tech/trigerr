@@ -1,0 +1,78 @@
+{
+  "_readme": [
+    "The log envelope, pinned. This file is IDENTICAL in project-sysstra's",
+    "sysstra-logging and project-trigerr's trigerr — both push into one Loki, so a",
+    "query written against one has to work against the other. test_schema_parity.py",
+    "in each repo asserts its own formatter reproduces this exactly, so a drift in",
+    "either project fails that project's tests instead of silently splitting the",
+    "schema. Changing the envelope means editing this file in BOTH repos and",
+    "bumping SCHEMA_VERSION.",
+    "",
+    "identity: emitted on every line, in this order, blank when unknown.",
+    "domain: reserved names, emitted ONLY where the concept exists. Padding these",
+    "would make 'this repo has no such concept' indistinguishable from 'this line",
+    "failed to populate it'.",
+    "intrinsic: computed from the record; a call site cannot displace them."
+  ],
+  "schema_version": "1",
+  "identity": [
+    "ts",
+    "level",
+    "schema",
+    "service",
+    "component",
+    "env",
+    "host",
+    "tenant",
+    "market",
+    "event",
+    "status",
+    "logger",
+    "message"
+  ],
+  "intrinsic": [
+    "ts",
+    "level",
+    "schema",
+    "logger",
+    "message"
+  ],
+  "env_backed": {
+    "service": "SERVICE",
+    "env": "ENVIRONMENT",
+    "host": "HOSTNAME",
+    "tenant": "TENANT",
+    "market": "MARKET"
+  },
+  "defaults": {
+    "env": "prod"
+  },
+  "domain": [
+    "request_id",
+    "mode",
+    "strategy",
+    "strategy_id",
+    "user_id",
+    "order_id",
+    "broker",
+    "credential_id",
+    "idempotency_key",
+    "segment",
+    "session",
+    "symbol",
+    "job",
+    "run_id",
+    "duration_s",
+    "pid",
+    "uptime_s",
+    "exc"
+  ],
+  "event_vocabulary": [
+    "job_start",
+    "job_complete",
+    "job_failed",
+    "health",
+    "process_start",
+    "process_stop"
+  ]
+}
