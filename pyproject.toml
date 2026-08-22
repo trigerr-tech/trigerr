@@ -33,6 +33,7 @@ dependencies = [
     "numba>=0.57",
     "tqdm>=4.0",
     "cryptography>=42",
+    "trigerr-logging>=0.4.1",
 ]
 
 [project.optional-dependencies]

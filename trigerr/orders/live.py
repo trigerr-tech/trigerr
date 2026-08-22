@@ -1,7 +1,7 @@
 from trigerr.orders import add_order_to_redis, fetch_orders_list
 from trigerr.utils import send_order_alert
 from trigerr.config import config, get_auth_headers
-from trigerr.logging_utils import get_context
+from trigerr_logging import get_context
 import requests
 from urllib.parse import urljoin
 import datetime

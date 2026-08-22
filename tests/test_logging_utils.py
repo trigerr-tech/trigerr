@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from trigerr import logging_utils as lu
+import trigerr_logging as lu
 
 
 @pytest.fixture(autouse=True)

@@ -5,3 +5,5 @@ redis==5.0.8
 pymongo>=4.0
 numba>=0.57
 tqdm>=4.0
+trigerr-logging>=0.4.1
+

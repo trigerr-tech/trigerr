@@ -18,7 +18,7 @@ import os
 
 import pytest
 
-from trigerr import logging_utils as lu
+import trigerr_logging as lu
 
 GOLDEN = os.path.join(os.path.dirname(__file__), "fixtures", "envelope.golden.json")
 

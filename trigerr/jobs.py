@@ -2,7 +2,7 @@
 
 Promotes a pattern that was hand-rolled identically in every batch script
 (job_start / job_complete / job_failed emitted around a try/except, e.g.
-trigerr-data-collection/miscellaneous/stocks_daily_eod.py). Doing it
+trigerr-data-collection-in/stocks/stocks_daily_eod.py). Doing it
 in one place means every job emits the same three events with the same field
 names, so "did last night's sync run, and how long did it take" is one query
 regardless of which repo owns the job.
@@ -10,7 +10,7 @@ regardless of which repo owns the job.
 Usage:
     from trigerr import get_logger, job_run
 
-    logger = get_logger("s3_sync", log_file=..., service="trigerr-data-collection")
+    logger = get_logger("s3_sync", log_file=..., service="trigerr-data-collection-in")
 
     with job_run(logger, "s3_sync"):
         sync_bucket()
@@ -22,7 +22,7 @@ import time
 import uuid
 from contextlib import contextmanager
 
-from trigerr.logging_utils import bound
+from trigerr_logging import bound
 
 
 def new_run_id():

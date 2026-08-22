@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from trigerr import logging_utils as lu
+import trigerr_logging as lu
 from trigerr.orders import live
 
 
