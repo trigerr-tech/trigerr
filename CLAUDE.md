@@ -3,8 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > **Platform-wide reference**: the Project Bible at
-> `../trigerr-trading-engine/docs/platform/PROJECT_BIBLE.md` (sibling checkout; lives in the
-> `trigerr-trading-engine` repo) — repo map, config/tenancy, contracts, data stores, gotchas.
+> `../trigerr-trading-strategies/docs/platform/PROJECT_BIBLE.md` (sibling checkout; lives in the
+> `trigerr-trading-strategies` repo) — repo map, config/tenancy, contracts, data stores, gotchas.
 > Where this file's project-overview half still says `sysstra` (it predates the rename), the
 > Bible and `PLATFORM_ARCHITECTURE.md` win.
 
