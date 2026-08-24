@@ -1,24 +1,24 @@
 # Package Documentation Template
 
-**For**: SysStra 12-Repo Documentation Project  
+**For**: Trigerr 12-Repo Documentation Project  
 **Version**: 1.0  
 **Created**: 2025-06-20  
-**Purpose**: Standardized structure for `sysstra_package_*.md` files across all repositories
+**Purpose**: Standardized structure for `trigerr_package_*.md` files across all repositories
 
 ---
 
 ## Overview
 
-This template provides a standardized structure for documenting each repository in the SysStra project. By following this format, all 12 repos will:
+This template provides a standardized structure for documenting each repository in the Trigerr project. By following this format, all 12 repos will:
 - Be self-contained (readable standalone)
 - Be mergeable (combine into a single "bible")
 - Have consistent cross-linking
 - Minimize duplication while maintaining clarity
 
 **Expected File Naming**:
-- Repo: `sysstra-core` → File: `sysstra_package_core.md`
-- Repo: `sysstra-data-api` → File: `sysstra_package_data_api.md`
-- Repo: `sysstra-orders-service` → File: `sysstra_package_orders.md`
+- Repo: `trigerr-core` → File: `trigerr_package_core.md`
+- Repo: `trigerr-data-api` → File: `trigerr_package_data_api.md`
+- Repo: `trigerr-orders-service` → File: `trigerr_package_orders.md`
 - etc.
 
 **File Size Guideline**: 1,500–3,000 lines (comprehensive but readable). Use `#offset` comments for long sections.
@@ -35,7 +35,7 @@ Copy this template and fill in each section. Sections marked **[CORE]** are mand
 **Version**: X.Y.Z  
 **Author**: [Author Name]  
 **Language/Stack**: [Python/Go/Node.js]  
-**Role in SysStra**: [Brief role, e.g., "Data fetching service"]
+**Role in Trigerr**: [Brief role, e.g., "Data fetching service"]
 
 ---
 
@@ -59,7 +59,7 @@ Copy this template and fill in each section. Sections marked **[CORE]** are mand
 **2-3 paragraph summary**:
 - What problem does this repo solve?
 - What's unique about it?
-- How does it fit into the larger SysStra ecosystem?
+- How does it fit into the larger Trigerr ecosystem?
 
 **Key Responsibilities**:
 - [ ] Responsibility 1
@@ -67,9 +67,9 @@ Copy this template and fill in each section. Sections marked **[CORE]** are mand
 - [ ] Responsibility 3
 
 **Dependencies on Other Repos** (for cross-linking):
-- Depends on: [[sysstra-core]] (for config management)
-- Depended on by: [[sysstra-orders-service]] (for order placement)
-- Parallel with: [[sysstra-live-data]] (independent services)
+- Depends on: [[trigerr-core]] (for config management)
+- Depended on by: [[trigerr-orders-service]] (for order placement)
+- Parallel with: [[trigerr-live-data]] (independent services)
 
 **Technology Stack**:
 - Language: Python 3.9+
@@ -339,8 +339,8 @@ config.load("path/to/config.yml")
 
 ### Internal Service Dependencies
 
-- **Depends on**: [[sysstra-core]] → config management, logging
-- **Depended on by**: [[sysstra-live-data]] → data processing
+- **Depends on**: [[trigerr-core]] → config management, logging
+- **Depended on by**: [[trigerr-live-data]] → data processing
 - **Event Streams**: Publishes `order_placed`, `position_updated` events
 
 ### Authentication & Security
@@ -424,7 +424,7 @@ plotly                # For visualization (optional)
 
 ### Vendored Dependencies
 
-List any bundled libraries (e.g., pandas_ta in sysstra-core)
+List any bundled libraries (e.g., pandas_ta in trigerr-core)
 
 ---
 
@@ -434,7 +434,7 @@ List any bundled libraries (e.g., pandas_ta in sysstra-core)
 
 ```bash
 # Clone and install
-git clone https://github.com/sysstra/repo-name.git
+git clone https://github.com/trigerr/repo-name.git
 cd repo-name
 pip install -e .
 
@@ -691,9 +691,9 @@ Calculate indicators | 200ms | 5k req/s
 ## Contact & Support
 
 - **Author**: [Name]
-- **Slack Channel**: #sysstra-repo-name
+- **Slack Channel**: #trigerr-repo-name
 - **On-Call Runbook**: [Link to wiki]
-- **Issue Tracker**: https://github.com/sysstra/repo-name/issues
+- **Issue Tracker**: https://github.com/trigerr/repo-name/issues
 
 ---
 
@@ -717,9 +717,9 @@ MIT License — See LICENSE file in repository.
 - Performance benchmarks and scaling strategy
 
 **Example Repos**:
-- sysstra-data-api
-- sysstra-orders-service
-- sysstra-broker-integration
+- trigerr-data-api
+- trigerr-orders-service
+- trigerr-broker-integration
 
 ### For Libraries (Python/JavaScript)
 
@@ -731,9 +731,9 @@ MIT License — See LICENSE file in repository.
 - Installation and usage patterns
 
 **Example Repos**:
-- sysstra-core (current package)
-- sysstra-ta-library
-- sysstra-client-sdk
+- trigerr-core (current package)
+- trigerr-ta-library
+- trigerr-client-sdk
 
 ### For Databases/Infrastructure
 
@@ -745,8 +745,8 @@ MIT License — See LICENSE file in repository.
 - Migration processes
 
 **Example Repos**:
-- sysstra-datastore
-- sysstra-cache-layer
+- trigerr-datastore
+- trigerr-cache-layer
 
 ### For Tools/Utilities
 
@@ -758,8 +758,8 @@ MIT License — See LICENSE file in repository.
 - Troubleshooting
 
 **Example Repos**:
-- sysstra-cli
-- sysstra-backtest-runner
+- trigerr-cli
+- trigerr-backtest-runner
 
 ---
 
@@ -770,8 +770,8 @@ MIT License — See LICENSE file in repository.
 **Pattern**: Use markdown link syntax with `[[repo-name:section]]` for later processing.
 
 ```markdown
-See [[sysstra-data-api#endpoints]] for available endpoints.
-Depends on [[sysstra-core#authentication]] for API key validation.
+See [[trigerr-data-api#endpoints]] for available endpoints.
+Depends on [[trigerr-core#authentication]] for API key validation.
 ```
 
 **In Combined Bible**: A script converts these to proper markdown links.
@@ -823,14 +823,14 @@ import glob
 import re
 
 def combine_docs():
-    """Combine all sysstra_package_*.md into single bible."""
+    """Combine all trigerr_package_*.md into single bible."""
     
     # 1. Start with architecture overview
     bible = read_file("ARCHITECTURE_OVERVIEW.md")
     bible += "\n\n---\n\n"
     
     # 2. For each repo file in order
-    for doc_file in sorted(glob.glob("sysstra_package_*.md")):
+    for doc_file in sorted(glob.glob("trigerr_package_*.md")):
         content = read_file(doc_file)
         
         # 3. Adjust heading levels (+1 for nested)
@@ -847,8 +847,8 @@ def combine_docs():
     bible = toc + "\n\n" + bible
     
     # 7. Export
-    write_file("SYSSTRA_COMPLETE_BIBLE.md", bible)
-    export_pdf("SYSSTRA_COMPLETE_BIBLE.pdf", bible)
+    write_file("TRIGERR_COMPLETE_BIBLE.md", bible)
+    export_pdf("TRIGERR_COMPLETE_BIBLE.pdf", bible)
     print(f"Generated combined bible: {len(bible)} chars, {bible.count(chr(10))} lines")
 
 def resolve_cross_refs(content, bible):
@@ -902,5 +902,5 @@ A: Yes — export to HTML/PDF, or keep as git-tracked Markdown. Either works for
 ## Support
 
 - Questions about this template? Contact documentation lead.
-- Finished documentation for your repo? Submit PR with `sysstra_package_yourrepo.md`
+- Finished documentation for your repo? Submit PR with `trigerr_package_yourrepo.md`
 - Need help with cross-repo links? See the script example above.

@@ -1,4 +1,4 @@
-# Sysstra Package Documentation
+# Trigerr Package Documentation
 
 **Version**: 0.1.4.6.3  
 **Author**: Anurag Singh Kushwah  
@@ -24,7 +24,7 @@
 
 ## Overview
 
-**Sysstra** is a Python library for end-to-end algorithmic trading workflows. It provides:
+**Trigerr** is a Python library for end-to-end algorithmic trading workflows. It provides:
 
 - **Unified interfaces** for multi-asset, multi-exchange trading (equities, derivatives, commodities, crypto)
 - **Historical and live market data** fetching with flexible granularity
@@ -35,7 +35,7 @@
 
 The library acts as a **client to two backend services**:
 - **Data API** (https://api.data.sysstra.com/): Historical and live market data
-- **Orders API** (https://api.orders.sysstra.com/): Order placement and position tracking
+- **Orders API** (https://api.orders.trigerr.com/): Order placement and position tracking
 
 ---
 
@@ -44,7 +44,7 @@ The library acts as a **client to two backend services**:
 ### Design Principles
 
 1. **API-Driven**: All data fetching and order operations delegate to backend services via REST APIs
-2. **Configuration-Centric**: Central config (`sysstra/config.py`) holds API credentials and service URLs
+2. **Configuration-Centric**: Central config (`trigerr/config.py`) holds API credentials and service URLs
 3. **Framework-Agnostic**: Uses standard Python libraries (requests, pandas, numpy)
 4. **Multi-Asset Support**: Abstracts away asset-type differences (EQUITY, OPTIONS, FUTURES) into unified function signatures
 5. **Lazy Loading**: TA module (pandas_ta) is vendored and loaded on demand
@@ -54,9 +54,9 @@ The library acts as a **client to two backend services**:
 ```
 User Code
   ↓
-Public API Functions (sysstra.set_api_key, sysstra.data.*, sysstra.orders.*)
+Public API Functions (trigerr.set_api_key, trigerr.data.*, trigerr.orders.*)
   ↓
-Configuration (sysstra/config.py)
+Configuration (trigerr/config.py)
   ↓
 HTTP Requests (Data API / Orders API)
   ↓
@@ -70,10 +70,10 @@ Backend Services (Redis cache + MongoDB persistence)
 ### Core Modules
 
 ```
-sysstra/
+trigerr/
 ├── __init__.py                  # Public API: set_api_key(), set_data_url(), set_orders_url()
 ├── config.py                    # Central configuration dictionary
-├── sysstra_utils.py             # Core utility functions (1043 lines)
+├── trigerr_utils.py             # Core utility functions (1043 lines)
 ├── custom_indicators.py         # Custom indicators (44.8 KB)
 ├── data/                        # Data fetching
 │   ├── __init__.py
@@ -107,7 +107,7 @@ sysstra/
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `sysstra_utils.py` | ~1043 | Core trading utilities: swing calc, granularity conversion, PnL calc, reporting |
+| `trigerr_utils.py` | ~1043 | Core trading utilities: swing calc, granularity conversion, PnL calc, reporting |
 | `custom_indicators.py` | ~1300 | Custom indicators (Stochastic, VFI, Swing calcs) not in pandas_ta |
 | `data/historical.py` | ~100 | Fetch historical candles (EOD, index, futures, options) from Data API |
 | `data/live.py` | ~50 | Real-time streaming market data |
@@ -123,20 +123,20 @@ sysstra/
 
 ### Configuration Functions
 
-All configuration functions are exposed at package level via `sysstra.__init__.py`:
+All configuration functions are exposed at package level via `trigerr.__init__.py`:
 
 ```python
-import sysstra
+import trigerr
 
 # Set API authentication
-sysstra.set_api_key("your-api-key")
+trigerr.set_api_key("your-api-key")
 
 # Override service URLs (optional, defaults in config.py)
-sysstra.set_data_url("https://custom-data-api.com/")
-sysstra.set_orders_url("https://custom-orders-api.com/")
+trigerr.set_data_url("https://custom-data-api.com/")
+trigerr.set_orders_url("https://custom-orders-api.com/")
 ```
 
-**Configuration Storage**: `sysstra/config.py` (dict-based, single source of truth)
+**Configuration Storage**: `trigerr/config.py` (dict-based, single source of truth)
 
 ---
 
@@ -147,7 +147,7 @@ All functions return JSON lists from the Data API. Dates as strings (YYYY-MM-DD)
 #### Equities & Indices
 
 ```python
-from sysstra.data import fetch_eod_candles, fetch_index_candles
+from trigerr.data import fetch_eod_candles, fetch_index_candles
 
 # End-of-day candles (NSE/BSE)
 eod_data = fetch_eod_candles(
@@ -171,7 +171,7 @@ intra_data = fetch_index_candles(
 #### Derivatives
 
 ```python
-from sysstra.data import fetch_futures_candle, fetch_option_candles, fetch_option_candles_by_symbol, fetch_option_candles_by_date
+from trigerr.data import fetch_futures_candle, fetch_option_candles, fetch_option_candles_by_symbol, fetch_option_candles_by_date
 
 # Futures historical data
 fut_data = fetch_futures_candle(
@@ -219,7 +219,7 @@ chain_data = fetch_option_candles_by_date(
 ### Order Execution: Live Trading
 
 ```python
-from sysstra.orders import place_lt_order
+from trigerr.orders import place_lt_order
 
 # Basic market order
 status, response = place_lt_order(
@@ -294,7 +294,7 @@ status, response = place_lt_order(
 ### Order Execution: Paper Trading (Virtual)
 
 ```python
-from sysstra.orders import place_virtual_order, fetch_orders_list, add_order_to_redis
+from trigerr.orders import place_virtual_order, fetch_orders_list, add_order_to_redis
 
 # Place simulated order (no actual execution)
 status, response = place_virtual_order(
@@ -318,7 +318,7 @@ add_order_to_redis(redis_cursor, order_dict)
 ### Order Execution: Backtesting
 
 ```python
-from sysstra.orders import place_bt_order, save_bt_report
+from trigerr.orders import place_bt_order, save_bt_report
 
 # Place order during backtest (simulated with historical candles)
 orders_list = []
@@ -353,7 +353,7 @@ save_bt_report(app_db_cursor, report_dict={
 **Two access patterns** (both equivalent):
 
 ```python
-from sysstra import ta
+from trigerr import ta
 
 # Flat access (preferred)
 ema_result = ta.ema(data_series, length=20)
@@ -387,7 +387,7 @@ rsi_result = ta.momentum.rsi(data_series, length=14)
 
 ```python
 import pandas as pd
-from sysstra import ta
+from trigerr import ta
 
 df = pd.DataFrame({"open": [...], "high": [...], "low": [...], "close": [...], "volume": [...]})
 
@@ -402,7 +402,7 @@ df.ta.macd(append=True)             # Adds MACD columns
 ### Core Utilities
 
 ```python
-from sysstra.sysstra_utils import (
+from trigerr.trigerr_utils import (
     change_granularity,
     calculate_swing,
     apply_indicators,
@@ -552,12 +552,12 @@ Orders stored in Redis/MongoDB follow this structure:
 
 ## Configuration
 
-### Central Config File: `sysstra/config.py`
+### Central Config File: `trigerr/config.py`
 
 ```python
 config = {
     "api_key": None,                                  # User-set via set_api_key()
-    "orders_url": "https://orders.api.sysstra.com/",  # Live trading orders API
+    "orders_url": "https://orders.api.trigerr.com/",  # Live trading orders API
     "data_url": "https://api.data.sysstra.com/"       # Historical/live data API
 }
 ```
@@ -572,12 +572,12 @@ config = {
 ### Runtime Configuration
 
 ```python
-import sysstra
+import trigerr
 
 # All configuration is optional (defaults in config.py)
-sysstra.set_api_key("your-api-key")
-sysstra.set_data_url("https://custom-api.com/data/")
-sysstra.set_orders_url("https://custom-api.com/orders/")
+trigerr.set_api_key("your-api-key")
+trigerr.set_data_url("https://custom-api.com/data/")
+trigerr.set_orders_url("https://custom-api.com/orders/")
 ```
 
 **Scope**: Configuration is global (module-level dict). Changes affect all subsequent calls.
@@ -594,7 +594,7 @@ sysstra.set_orders_url("https://custom-api.com/orders/")
    - Request format: `{"symbol", "exchange", "from_date", "to_date", "granularity", ...}`
    - Response format: JSON array of candle objects
 
-2. **Orders API** (`https://api.orders.sysstra.com/`)
+2. **Orders API** (`https://api.orders.trigerr.com/`)
    - Endpoints: `/place-order`, `/order-status`, `/order-list`, `/cancel-order`
    - Authentication: `x-api-key` header
    - Request format: `{"symbol", "exchange", "quantity", "order_type", "credential_id", ...}`
@@ -606,7 +606,7 @@ sysstra.set_orders_url("https://custom-api.com/orders/")
 
 ### Authentication Flow
 
-1. User calls `sysstra.set_api_key(key)`
+1. User calls `trigerr.set_api_key(key)`
 2. Key stored in `config["api_key"]`
 3. All requests to Data API and Orders API include header: `{"x-api-key": config["api_key"]}`
 4. Backend validates and returns data/confirmation
@@ -715,7 +715,7 @@ redis         # Cache layer for orders
 
 ### Vendored Dependencies
 
-- **pandas_ta** (v0.3.81b0): Technical analysis indicators library, vendored directly in `sysstra/ta/`
+- **pandas_ta** (v0.3.81b0): Technical analysis indicators library, vendored directly in `trigerr/ta/`
 
 ### Optional Dependencies
 
@@ -730,8 +730,8 @@ redis         # Cache layer for orders
 
 ```bash
 # Clone repository
-git clone https://github.com/sysstra/sysstra.git
-cd sysstra
+git clone https://github.com/trigerr/trigerr.git
+cd trigerr
 
 # Install in editable mode with dependencies
 pip install -e .
@@ -747,27 +747,27 @@ pip install -r requirements.txt
 python setup.py sdist bdist_wheel
 
 # Output files:
-# dist/sysstra-0.1.4.6.3.tar.gz
-# dist/sysstra-0.1.4.6.3-py3-none-any.whl
+# dist/trigerr-0.1.4.6.3.tar.gz
+# dist/trigerr-0.1.4.6.3-py3-none-any.whl
 ```
 
 ### Installation from Distribution
 
 ```bash
 # Install from source tarball
-pip install dist/sysstra-0.1.4.6.3.tar.gz
+pip install dist/trigerr-0.1.4.6.3.tar.gz
 
 # Or from PyPI
-pip install sysstra
+pip install trigerr
 ```
 
 ### Package Metadata
 
-- **Name**: sysstra
+- **Name**: trigerr
 - **Version**: 0.1.4.6.3 (semver-like, component-based)
 - **Author**: Anurag Singh Kushwah
-- **Email**: anurag@sysstra.com
-- **Homepage**: https://github.com/sysstra/sysstra
+- **Email**: anurag@trigerr.com
+- **Homepage**: https://github.com/trigerr/trigerr
 - **License**: MIT
 - **Classifiers**: Python 3, OS-independent, MIT License
 
@@ -784,11 +784,11 @@ python examples/orders_test.py
 
 ### 1. Vendored pandas_ta
 
-**Decision**: Include pandas_ta as vendored code in `sysstra/ta/` rather than external dependency.
+**Decision**: Include pandas_ta as vendored code in `trigerr/ta/` rather than external dependency.
 
 **Rationale**:
 - Avoids version conflicts and breaking changes in pandas_ta
-- Enables customization and fixes specific to Sysstra
+- Enables customization and fixes specific to Trigerr
 - Single-source-of-truth for indicator implementations
 - Users don't need to manage pandas_ta separately
 
@@ -808,7 +808,7 @@ python examples/orders_test.py
 
 ### 3. Global Configuration
 
-**Decision**: Central mutable dict in `sysstra/config.py` for runtime configuration.
+**Decision**: Central mutable dict in `trigerr/config.py` for runtime configuration.
 
 **Rationale**:
 - Simple, lightweight (no files or environment variables)
@@ -836,8 +836,8 @@ python examples/orders_test.py
 
 ```python
 import pandas as pd
-from sysstra.data import fetch_eod_candles
-from sysstra.sysstra_utils import apply_indicators, calculate_swing
+from trigerr.data import fetch_eod_candles
+from trigerr.trigerr_utils import apply_indicators, calculate_swing
 
 # Fetch data
 data = fetch_eod_candles("SBIN", "2024-01-01", "2024-12-31", "XNSE")
@@ -857,12 +857,12 @@ df["signal"] = (df["EMA_20"] > df["EMA_50"]).astype(int)
 ### 2. Live Trade with Swing-Based Entry
 
 ```python
-import sysstra
-from sysstra.data import fetch_index_candles
-from sysstra.sysstra_utils import calculate_swing
-from sysstra.orders import place_lt_order
+import trigerr
+from trigerr.data import fetch_index_candles
+from trigerr.trigerr_utils import calculate_swing
+from trigerr.orders import place_lt_order
 
-sysstra.set_api_key("my-key")
+trigerr.set_api_key("my-key")
 
 # Fetch live data
 data = fetch_index_candles("NIFTY 50", "2025-01-01", "2025-01-10", granularity=15)
@@ -887,7 +887,7 @@ if df.iloc[-1]["swing_change"]:
 ### 3. Analyze Options Chain
 
 ```python
-from sysstra.data import fetch_option_candles_by_date
+from trigerr.data import fetch_option_candles_by_date
 
 # Fetch all strikes for NIFTY on a date range
 chain_data = fetch_option_candles_by_date(
@@ -907,7 +907,7 @@ df = pd.DataFrame(chain_data)
 ### Authentication Failures
 
 - **Symptom**: Empty responses or "Unauthorized" errors
-- **Check**: `sysstra.set_api_key()` called before any API function
+- **Check**: `trigerr.set_api_key()` called before any API function
 - **Verify**: API key is valid and not expired
 
 ### Data API Latency
@@ -964,6 +964,6 @@ MIT License — See LICENSE file in repository.
 ## Contact & Support
 
 - **Author**: Anurag Singh Kushwah
-- **Email**: anurag@sysstra.com
-- **GitHub**: https://github.com/sysstra/sysstra
-- **Issues**: https://github.com/sysstra/sysstra/issues
+- **Email**: anurag@trigerr.com
+- **GitHub**: https://github.com/trigerr/trigerr
+- **Issues**: https://github.com/trigerr/trigerr/issues

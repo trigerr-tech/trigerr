@@ -1,6 +1,6 @@
 # Supported Brokers
 
-This document provides detailed information about all brokers supported by Sysstra for brokerage calculation and order execution.
+This document provides detailed information about all brokers supported by Trigerr for brokerage calculation and order execution.
 
 ---
 
@@ -69,7 +69,7 @@ This document provides detailed information about all brokers supported by Sysst
 #### Usage Example
 
 ```python
-from sysstra.sysstra_utils import calculate_brokerage
+from trigerr.trigerr_utils import calculate_brokerage
 
 # Equity Intraday
 charges, net_pnl = calculate_brokerage(
@@ -113,7 +113,7 @@ charges, net_pnl = calculate_brokerage(
 #### Order Execution
 
 ```python
-from sysstra.orders import place_lt_order
+from trigerr.orders import place_lt_order
 
 # Place equity order
 status, response = place_lt_order(
@@ -186,7 +186,7 @@ status, response = place_lt_order(
 #### Usage Example
 
 ```python
-from sysstra.sysstra_utils import calculate_brokerage
+from trigerr.trigerr_utils import calculate_brokerage
 
 # US Equities
 charges, net_pnl = calculate_brokerage(
@@ -227,7 +227,7 @@ charges, net_pnl = calculate_brokerage(
 #### Order Execution
 
 ```python
-from sysstra.orders import place_lt_order
+from trigerr.orders import place_lt_order
 
 # Place equity order
 status, response = place_lt_order(
@@ -271,7 +271,7 @@ status, response = place_lt_order(
 #### Usage Example
 
 ```python
-from sysstra.sysstra_utils import calculate_brokerage
+from trigerr.trigerr_utils import calculate_brokerage
 
 # US Equities
 charges, net_pnl = calculate_brokerage(
@@ -328,7 +328,7 @@ charges, net_pnl = calculate_brokerage(
 #### Usage Example
 
 ```python
-from sysstra.sysstra_utils import calculate_brokerage
+from trigerr.trigerr_utils import calculate_brokerage
 
 # Spot Trading
 charges, net_pnl = calculate_brokerage(
@@ -375,7 +375,7 @@ charges, net_pnl = calculate_brokerage(
 #### Usage Example
 
 ```python
-from sysstra.sysstra_utils import calculate_brokerage
+from trigerr.trigerr_utils import calculate_brokerage
 
 # Crypto Trading
 charges, net_pnl = calculate_brokerage(
@@ -444,12 +444,12 @@ charges, net_pnl = calculate_brokerage(
 
 ### Credential Setup
 
-Each broker requires specific credential setup through the Sysstra orders API:
+Each broker requires specific credential setup through the Trigerr orders API:
 
 ```python
 # Credentials are managed through the orders API
 # Contact your broker for API access
-credential_id = "your-credential-id-from-sysstra-dashboard"
+credential_id = "your-credential-id-from-trigerr-dashboard"
 ```
 
 ### Regulatory Compliance
@@ -467,4 +467,4 @@ For broker-specific issues:
 - Binance: https://www.binance.com/support
 - CoinDCX: https://support.coindcx.com
 
-For Sysstra integration issues, please open an issue on GitHub or contact support@sysstra.com.
+For Trigerr integration issues, please open an issue on GitHub or contact support@trigerr.com.

@@ -281,9 +281,9 @@ When adding entries:
 ## Support
 
 For questions about specific versions or upgrade issues:
-- Check the [documentation](https://sysstra.com/docs)
-- Open an issue on [GitHub](https://github.com/sysstra/sysstra/issues)
-- Email support@sysstra.com
+- Check the [documentation](https://trigerr.com/docs)
+- Open an issue on [GitHub](https://github.com/trigerr/trigerr/issues)
+- Email support@trigerr.com
 
 ---
 

@@ -1,4 +1,4 @@
-# SysStra Project: Architecture Overview
+# Trigerr Project: Architecture Overview
 
 **Last Updated**: 2025-06-20  
 **Scope**: System-wide architecture for 12 interconnected repositories  
@@ -24,9 +24,9 @@
 
 ## System Overview
 
-### What is SysStra?
+### What is Trigerr?
 
-**SysStra** is an end-to-end **algorithmic trading platform** enabling traders and developers to:
+**Trigerr** is an end-to-end **algorithmic trading platform** enabling traders and developers to:
 - Build, backtest, and deploy trading strategies across multiple asset classes and exchanges
 - Access historical and real-time market data with unified API
 - Execute orders in live, paper-trading, and backtesting modes
@@ -36,18 +36,18 @@
 
 | Capability | Owned By | Key Features |
 |------------|----------|--------------|
-| **Strategy Development** | sysstra-core (lib) | 40+ indicators, swing detection, PnL calculations |
+| **Strategy Development** | trigerr-core (lib) | 40+ indicators, swing detection, PnL calculations |
 | **Historical Data** | sysstra-data-api | EOD, intraday, futures, options (multiple exchanges) |
-| **Live Data Streaming** | sysstra-live-streaming | Real-time price feeds, websocket, low latency |
-| **Order Execution** | sysstra-orders-api | Multi-broker, multi-asset, multiple order types |
-| **Backtesting** | sysstra-backtest-runner | Historical simulation, walk-forward, Monte Carlo |
-| **Broker Integration** | sysstra-broker-gateway | Zerodha, Interactive Brokers, Schwab, Binance |
-| **Analytics & Reporting** | sysstra-analytics | Performance metrics, drawdown, equity curve |
-| **Authentication** | sysstra-auth-service | API key management, rate limiting, audit logs |
-| **Caching & Performance** | sysstra-cache-layer | Redis wrapper, session management |
-| **Data Persistence** | sysstra-database | MongoDB schema, migrations, backups |
-| **User Interface** | sysstra-web-dashboard | Web-based monitoring, strategy management |
-| **Developer Tools** | sysstra-cli | Command-line interface, local testing |
+| **Live Data Streaming** | trigerr-live-streaming | Real-time price feeds, websocket, low latency |
+| **Order Execution** | trigerr-orders-api | Multi-broker, multi-asset, multiple order types |
+| **Backtesting** | trigerr-backtest-runner | Historical simulation, walk-forward, Monte Carlo |
+| **Broker Integration** | trigerr-broker-gateway | Zerodha, Interactive Brokers, Schwab, Binance |
+| **Analytics & Reporting** | trigerr-analytics | Performance metrics, drawdown, equity curve |
+| **Authentication** | trigerr-auth-service | API key management, rate limiting, audit logs |
+| **Caching & Performance** | trigerr-cache-layer | Redis wrapper, session management |
+| **Data Persistence** | trigerr-database | MongoDB schema, migrations, backups |
+| **User Interface** | trigerr-web-dashboard | Web-based monitoring, strategy management |
+| **Developer Tools** | trigerr-cli | Command-line interface, local testing |
 
 ### Design Principles
 
@@ -66,18 +66,18 @@
 
 | Repo | Role | Language | Type | Primary Function |
 |------|------|----------|------|-----------------|
-| **sysstra-core** | Client Library | Python | Library | Strategy coding, indicators, utilities |
+| **trigerr-core** | Client Library | Python | Library | Strategy coding, indicators, utilities |
 | **sysstra-data-api** | Backend Service | Python | FastAPI | Historical market data fetching |
-| **sysstra-live-streaming** | Backend Service | Go | WebSocket | Real-time price feeds, tick data |
-| **sysstra-orders-api** | Backend Service | Python | FastAPI | Order placement, execution, management |
-| **sysstra-broker-gateway** | Backend Service | Python | FastAPI | Broker connectivity (Zerodha, IB, Schwab, Binance) |
-| **sysstra-backtest-runner** | Backend Service | Python | Flask | Backtesting engine, strategy simulation |
-| **sysstra-analytics** | Backend Service | Python | FastAPI | Performance metrics, reporting, analytics |
-| **sysstra-auth-service** | Backend Service | Python | FastAPI | API key validation, user management, RBAC |
-| **sysstra-cache-layer** | Backend Service | Node.js | Express | Redis wrapper, session management |
-| **sysstra-database** | Infrastructure | SQL/Scripts | Migrations | MongoDB schema, indexes, backups |
-| **sysstra-web-dashboard** | Frontend | React/TypeScript | Web App | Strategy management, portfolio monitoring |
-| **sysstra-cli** | Developer Tool | Python | CLI | Local testing, strategy scaffolding, debugging |
+| **trigerr-live-streaming** | Backend Service | Go | WebSocket | Real-time price feeds, tick data |
+| **trigerr-orders-api** | Backend Service | Python | FastAPI | Order placement, execution, management |
+| **trigerr-broker-gateway** | Backend Service | Python | FastAPI | Broker connectivity (Zerodha, IB, Schwab, Binance) |
+| **trigerr-backtest-runner** | Backend Service | Python | Flask | Backtesting engine, strategy simulation |
+| **trigerr-analytics** | Backend Service | Python | FastAPI | Performance metrics, reporting, analytics |
+| **trigerr-auth-service** | Backend Service | Python | FastAPI | API key validation, user management, RBAC |
+| **trigerr-cache-layer** | Backend Service | Node.js | Express | Redis wrapper, session management |
+| **trigerr-database** | Infrastructure | SQL/Scripts | Migrations | MongoDB schema, indexes, backups |
+| **trigerr-web-dashboard** | Frontend | React/TypeScript | Web App | Strategy management, portfolio monitoring |
+| **trigerr-cli** | Developer Tool | Python | CLI | Local testing, strategy scaffolding, debugging |
 
 ---
 
@@ -93,7 +93,7 @@
          │                                │
          ▼                                ▼
 ┌────────────────────┐        ┌──────────────────────┐
-│  sysstra-cli       │        │  sysstra-web-       │
+│  trigerr-cli       │        │  trigerr-web-       │
 │  (Command Line)    │        │  dashboard          │
 │                    │        │  (Web UI)           │
 └────────┬───────────┘        └──────────┬──────────┘
@@ -102,7 +102,7 @@
          │   │                         │                     │
          │   ▼                         ▼                     ▼
          │  ┌──────────────────────────────────────────────────┐
-         │  │         sysstra-core (Python Library)           │
+         │  │         trigerr-core (Python Library)           │
          │  │  ┌────────────────────────────────────────────┐ │
          │  │  │ • 40+ Indicators (EMA, RSI, MACD, ADX...) │ │
          │  │  │ • Swing Detection & Market Structure      │ │
@@ -117,7 +117,7 @@
          │    │               │               │               │
          ▼    ▼               ▼               ▼               ▼
 ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│ sysstra-         │  │ sysstra-orders   │  │ sysstra-backtest │  │ sysstra-         │
+│ trigerr-         │  │ trigerr-orders   │  │ trigerr-backtest │  │ trigerr-         │
 │ data-api         │  │ -api             │  │ -runner          │  │ analytics        │
 │                  │  │                  │  │                  │  │                  │
 │ Historical Data  │  │ Order Management │  │ Strategy Testing │  │ Performance      │
@@ -127,7 +127,7 @@
        │                       │                     │                     │
        │                       ▼                     │                     │
        │              ┌──────────────────┐          │                     │
-       │              │ sysstra-broker   │          │                     │
+       │              │ trigerr-broker   │          │                     │
        │              │ -gateway         │          │                     │
        │              │                  │          │                     │
        │              │ Multi-Broker     │          │                     │
@@ -142,7 +142,7 @@
        │  ┌─────────────────────────────────────────────┐              │
        │  │       BACKEND DATA SERVICES                 │              │
        │  │  ┌──────────────────────────────────────┐  │              │
-       │  │  │ sysstra-live-streaming (Go/WebSocket)  │  │              │
+       │  │  │ trigerr-live-streaming (Go/WebSocket)  │  │              │
        │  │  │ • Real-time price feeds               │  │              │
        │  │  │ • Tick data streaming                 │  │              │
        │  │  │ • Multiple exchange connectors        │  │              │
@@ -153,7 +153,7 @@
        │    │               │               │                        │
        │    ▼               ▼               ▼                        │
        │  ┌──────────────────┐  ┌──────────────────┐   ┌────────────┴──────┐
-       │  │ sysstra-auth-    │  │ sysstra-cache    │   │ sysstra-database  │
+       │  │ trigerr-auth-    │  │ trigerr-cache    │   │ trigerr-database  │
        │  │ service          │  │ -layer           │   │ (MongoDB Schema)  │
        │  │                  │  │                  │   │                   │
        │  │ • API Key Mgmt   │  │ • Redis Wrapper  │   │ • User Data       │
@@ -178,29 +178,29 @@
 
 ```
 FRONTEND LAYER
-├── sysstra-cli ........................ Command-line tools for local dev
-└── sysstra-web-dashboard ............. React web app for portfolio mgmt
+├── trigerr-cli ........................ Command-line tools for local dev
+└── trigerr-web-dashboard ............. React web app for portfolio mgmt
 
 CLIENT LIBRARY LAYER
-└── sysstra-core ....................... Python lib: indicators, swing, utils
+└── trigerr-core ....................... Python lib: indicators, swing, utils
 
 API GATEWAY LAYER
-├── Authentication/Rate Limiting (sysstra-auth-service)
+├── Authentication/Rate Limiting (trigerr-auth-service)
 └── Load Balancing (reverse proxy, not in repos)
 
 BACKEND SERVICES LAYER
 ├── Data Services
 │   ├── sysstra-data-api ............... Historical OHLCV data
-│   └── sysstra-live-streaming ........ Real-time price feeds
+│   └── trigerr-live-streaming ........ Real-time price feeds
 ├── Execution Services
-│   ├── sysstra-orders-api ............ Order placement & tracking
-│   └── sysstra-broker-gateway ........ Broker connectivity
+│   ├── trigerr-orders-api ............ Order placement & tracking
+│   └── trigerr-broker-gateway ........ Broker connectivity
 ├── Analysis Services
-│   ├── sysstra-backtest-runner ....... Backtesting engine
-│   └── sysstra-analytics ............. Performance reporting
+│   ├── trigerr-backtest-runner ....... Backtesting engine
+│   └── trigerr-analytics ............. Performance reporting
 └── Infrastructure Services
-    ├── sysstra-cache-layer ............ Redis wrapper
-    └── sysstra-database ............... MongoDB schema
+    ├── trigerr-cache-layer ............ Redis wrapper
+    └── trigerr-database ............... MongoDB schema
 
 DATA LAYER
 ├── MongoDB ............................ Persistent storage (orders, strategies, user data)
@@ -217,7 +217,7 @@ DATA LAYER
 ```
 Developer writes strategy in Python
            ↓
-    sysstra-core (library)
+    trigerr-core (library)
            ↓
    fetch_eod_candles()
            ↓
@@ -235,13 +235,13 @@ Developer writes strategy in Python
            ↓
    Execute via place_bt_order()
            ↓
-    sysstra-backtest-runner
+    trigerr-backtest-runner
            ↓
     Simulate fills (FIFO, market impact)
            ↓
     Track positions & PnL
            ↓
-    sysstra-analytics
+    trigerr-analytics
            ↓
     generate_mt_report()
            ↓
@@ -253,13 +253,13 @@ Developer writes strategy in Python
 ### 2. Live Trading Flow
 
 ```
-Trader deploys strategy (sysstra-cli or web-dashboard)
+Trader deploys strategy (trigerr-cli or web-dashboard)
            ↓
-    sysstra-core (library)
+    trigerr-core (library)
            ↓
    fetch_index_candles() [1-min granularity]
            ↓
-    sysstra-live-streaming (WebSocket)
+    trigerr-live-streaming (WebSocket)
            ↓
     Real-time price data
            ↓
@@ -267,11 +267,11 @@ Trader deploys strategy (sysstra-cli or web-dashboard)
            ↓
    place_lt_order(symbol, quantity, ...)
            ↓
-    sysstra-orders-api
+    trigerr-orders-api
            ↓
     Validate order (size, risk limits)
            ↓
-    sysstra-broker-gateway
+    trigerr-broker-gateway
            ↓
     Forward to broker API (Zerodha, IB, Schwab)
            ↓
@@ -285,7 +285,7 @@ Trader deploys strategy (sysstra-cli or web-dashboard)
            ↓
     Send event: "order_placed"
            ↓
-    Update portfolio in sysstra-analytics
+    Update portfolio in trigerr-analytics
            ↓
     Push notification to web-dashboard
            ↓
@@ -299,7 +299,7 @@ Developer calls API (e.g., POST /fetch-eod-data)
            ↓
     Request includes x-api-key header
            ↓
-    sysstra-auth-service
+    trigerr-auth-service
            ↓
     Validate API key against MongoDB
            ↓
@@ -325,7 +325,7 @@ Market open
            ↓
     NSE/BSE/Binance sends price tick
            ↓
-    sysstra-live-streaming (Go service)
+    trigerr-live-streaming (Go service)
            ↓
     Connect via WebSocket/FIX/API
            ↓
@@ -337,7 +337,7 @@ Market open
            ↓
     Publish event to WebSocket subscribers
            ↓
-    Clients (web-dashboard, traders using sysstra-core)
+    Clients (web-dashboard, traders using trigerr-core)
            ↓
     Receive real-time price update
            ↓
@@ -356,35 +356,35 @@ Market open
 
 | Source | → | Target | Protocol | Purpose | Auth |
 |--------|---|--------|----------|---------|------|
-| sysstra-core | → | sysstra-data-api | REST | Fetch historical data | API key |
-| sysstra-core | → | sysstra-orders-api | REST | Place orders | API key |
-| sysstra-core | → | sysstra-live-streaming | WebSocket | Subscribe to price feeds | API key |
-| sysstra-orders-api | → | sysstra-broker-gateway | REST | Execute on broker | Internal JWT |
-| sysstra-orders-api | → | sysstra-auth-service | REST | Validate user | Service-to-service |
-| sysstra-backtest-runner | → | sysstra-data-api | REST | Fetch historical data | Service token |
-| sysstra-backtest-runner | → | sysstra-analytics | REST | Send backtest results | Service token |
-| sysstra-analytics | → | sysstra-database | MongoDB Driver | Store reports | Direct connection |
-| sysstra-cache-layer | → | Redis | Redis Protocol | Cache operations | Local connection |
-| sysstra-database | → | MongoDB | MongoDB Driver | Data persistence | Direct connection |
-| sysstra-live-streaming | → | Redis | Redis Protocol | Publish price updates | Local connection |
-| sysstra-web-dashboard | → | sysstra-auth-service | REST | Login & token refresh | OAuth2 / JWT |
-| sysstra-web-dashboard | → | sysstra-analytics | REST | Fetch portfolio data | JWT |
-| sysstra-cli | → | sysstra-core | Python Import | Strategy execution | Local |
-| sysstra-cli | → | sysstra-backtest-runner | REST | Submit backtest job | API key |
+| trigerr-core | → | sysstra-data-api | REST | Fetch historical data | API key |
+| trigerr-core | → | trigerr-orders-api | REST | Place orders | API key |
+| trigerr-core | → | trigerr-live-streaming | WebSocket | Subscribe to price feeds | API key |
+| trigerr-orders-api | → | trigerr-broker-gateway | REST | Execute on broker | Internal JWT |
+| trigerr-orders-api | → | trigerr-auth-service | REST | Validate user | Service-to-service |
+| trigerr-backtest-runner | → | sysstra-data-api | REST | Fetch historical data | Service token |
+| trigerr-backtest-runner | → | trigerr-analytics | REST | Send backtest results | Service token |
+| trigerr-analytics | → | trigerr-database | MongoDB Driver | Store reports | Direct connection |
+| trigerr-cache-layer | → | Redis | Redis Protocol | Cache operations | Local connection |
+| trigerr-database | → | MongoDB | MongoDB Driver | Data persistence | Direct connection |
+| trigerr-live-streaming | → | Redis | Redis Protocol | Publish price updates | Local connection |
+| trigerr-web-dashboard | → | trigerr-auth-service | REST | Login & token refresh | OAuth2 / JWT |
+| trigerr-web-dashboard | → | trigerr-analytics | REST | Fetch portfolio data | JWT |
+| trigerr-cli | → | trigerr-core | Python Import | Strategy execution | Local |
+| trigerr-cli | → | trigerr-backtest-runner | REST | Submit backtest job | API key |
 
 ### External Service Dependencies
 
 | Service | Type | Used By | Purpose |
 |---------|------|---------|---------|
-| NSE API | REST | sysstra-data-api, sysstra-live-streaming | Equity data, live prices |
-| BSE API | REST | sysstra-data-api, sysstra-live-streaming | Equity data, live prices |
-| Zerodha API | REST | sysstra-broker-gateway | Order execution, position mgmt |
-| Interactive Brokers API | REST/Socket | sysstra-broker-gateway | Order execution, real-time data |
-| Schwab API | REST | sysstra-broker-gateway | US equity/options orders |
-| Binance API | REST/WebSocket | sysstra-broker-gateway, sysstra-live-streaming | Crypto orders & prices |
-| CoinDCX API | REST | sysstra-broker-gateway | Crypto orders |
+| NSE API | REST | sysstra-data-api, trigerr-live-streaming | Equity data, live prices |
+| BSE API | REST | sysstra-data-api, trigerr-live-streaming | Equity data, live prices |
+| Zerodha API | REST | trigerr-broker-gateway | Order execution, position mgmt |
+| Interactive Brokers API | REST/Socket | trigerr-broker-gateway | Order execution, real-time data |
+| Schwab API | REST | trigerr-broker-gateway | US equity/options orders |
+| Binance API | REST/WebSocket | trigerr-broker-gateway, trigerr-live-streaming | Crypto orders & prices |
+| CoinDCX API | REST | trigerr-broker-gateway | Crypto orders |
 | MongoDB | Native | All backend services | Data persistence |
-| Redis | Native | sysstra-cache-layer, all services | Cache & session mgmt |
+| Redis | Native | trigerr-cache-layer, all services | Cache & session mgmt |
 
 ---
 
@@ -395,20 +395,20 @@ Market open
 ```
 Developer Laptop
 │
-├── sysstra-cli (Python)
+├── trigerr-cli (Python)
 │   └── → localhost:8000 (local backend services)
 │
-├── sysstra-core (Python lib)
+├── trigerr-core (Python lib)
 │   └── → import locally
 │
 ├── Backend Services (Docker containers)
 │   ├── sysstra-data-api:8001
-│   ├── sysstra-orders-api:8002
-│   ├── sysstra-backtest-runner:8003
-│   ├── sysstra-analytics:8004
-│   ├── sysstra-auth-service:8005
-│   ├── sysstra-live-streaming:8006
-│   └── sysstra-cache-layer:8007
+│   ├── trigerr-orders-api:8002
+│   ├── trigerr-backtest-runner:8003
+│   ├── trigerr-analytics:8004
+│   ├── trigerr-auth-service:8005
+│   ├── trigerr-live-streaming:8006
+│   └── trigerr-cache-layer:8007
 │
 ├── Databases (Docker containers)
 │   ├── MongoDB (port 27017)
@@ -422,7 +422,7 @@ Developer Laptop
 
 **Start Script**:
 ```bash
-cd sysstra-development
+cd trigerr-development
 docker-compose up -d
 # Brings up all services with shared MongoDB & Redis
 ```
@@ -435,11 +435,11 @@ Staging Server (EC2 / DigitalOcean)
 ├── Load Balancer (Nginx)
 │   │
 │   ├── sysstra-data-api:3
-│   ├── sysstra-orders-api:3
-│   ├── sysstra-backtest-runner:2
-│   ├── sysstra-analytics:2
-│   ├── sysstra-auth-service:2
-│   └── sysstra-live-streaming:1 (stateful)
+│   ├── trigerr-orders-api:3
+│   ├── trigerr-backtest-runner:2
+│   ├── trigerr-analytics:2
+│   ├── trigerr-auth-service:2
+│   └── trigerr-live-streaming:1 (stateful)
 │
 ├── Shared Databases
 │   ├── MongoDB (3-node replica set)
@@ -453,7 +453,7 @@ Staging Server (EC2 / DigitalOcean)
 **Deployment**:
 ```bash
 # Update image in docker-compose.yml
-docker pull registry.sysstra.com/sysstra-data-api:v0.1.4
+docker pull registry.trigerr.com/sysstra-data-api:v0.1.4
 docker-compose -f docker-compose.staging.yml up -d
 ```
 
@@ -462,15 +462,15 @@ docker-compose -f docker-compose.staging.yml up -d
 ```
 Kubernetes Cluster
 │
-├── Namespace: sysstra-prod
+├── Namespace: trigerr-prod
 │   │
 │   ├── Deployment: sysstra-data-api (replicas: 5)
-│   ├── Deployment: sysstra-orders-api (replicas: 5)
-│   ├── Deployment: sysstra-backtest-runner (replicas: 3)
-│   ├── Deployment: sysstra-analytics (replicas: 3)
-│   ├── Deployment: sysstra-auth-service (replicas: 3)
-│   ├── StatefulSet: sysstra-live-streaming (replicas: 2)
-│   └── Deployment: sysstra-cache-layer (replicas: 2)
+│   ├── Deployment: trigerr-orders-api (replicas: 5)
+│   ├── Deployment: trigerr-backtest-runner (replicas: 3)
+│   ├── Deployment: trigerr-analytics (replicas: 3)
+│   ├── Deployment: trigerr-auth-service (replicas: 3)
+│   ├── StatefulSet: trigerr-live-streaming (replicas: 2)
+│   └── Deployment: trigerr-cache-layer (replicas: 2)
 │
 ├── Ingress: API Gateway (TLS, rate limiting)
 │
@@ -493,16 +493,16 @@ Kubernetes Cluster
 **Deployment**:
 ```bash
 # Build and push image
-docker build -t registry.sysstra.com/sysstra-data-api:v0.1.4 .
-docker push registry.sysstra.com/sysstra-data-api:v0.1.4
+docker build -t registry.trigerr.com/sysstra-data-api:v0.1.4 .
+docker push registry.trigerr.com/sysstra-data-api:v0.1.4
 
 # Update Kubernetes deployment
 kubectl set image deployment/sysstra-data-api \
-  sysstra-data-api=registry.sysstra.com/sysstra-data-api:v0.1.4 \
-  -n sysstra-prod
+  sysstra-data-api=registry.trigerr.com/sysstra-data-api:v0.1.4 \
+  -n trigerr-prod
 
 # Verify rollout
-kubectl rollout status deployment/sysstra-data-api -n sysstra-prod
+kubectl rollout status deployment/sysstra-data-api -n trigerr-prod
 ```
 
 ---
@@ -676,7 +676,7 @@ x-idempotency-key: order-2025-06-20-001
 {
   "timestamp": "2025-06-20T09:30:00.123Z",
   "level": "INFO",
-  "service": "sysstra-orders-api",
+  "service": "trigerr-orders-api",
   "request_id": "req-abc123",
   "user_id": "user-xyz",
   "message": "Order placed successfully",
@@ -698,7 +698,7 @@ x-idempotency-key: order-2025-06-20-001
 
 ### 8. Version Compatibility Matrix
 
-| sysstra-core | data-api | orders-api | auth-service | live-streaming | backtest-runner |
+| trigerr-core | data-api | orders-api | auth-service | live-streaming | backtest-runner |
 |--------------|----------|-----------|--------------|-----------------|-----------------|
 | 0.1.4.6.3 | 0.2.x | 0.3.x | 0.1.x | 0.1.x | 0.2.x |
 | 0.1.5.x | 0.3.x | 0.4.x | 0.2.x | 0.2.x | 0.3.x |
@@ -711,11 +711,11 @@ x-idempotency-key: order-2025-06-20-001
 
 | Language | Used By | Reason |
 |----------|---------|--------|
-| Python 3.9+ | sysstra-core, data-api, orders-api, analytics, auth, backtest, cli | Rich ecosystem (pandas, numpy), rapid development |
-| Go 1.19+ | sysstra-live-streaming | High concurrency, low-latency WebSocket handling |
-| TypeScript | sysstra-web-dashboard | Type safety, React ecosystem |
-| JavaScript/Node.js | sysstra-cache-layer | Lightweight, event-driven, Redis client |
-| SQL/Shell | sysstra-database | Schema management, backups, migrations |
+| Python 3.9+ | trigerr-core, data-api, orders-api, analytics, auth, backtest, cli | Rich ecosystem (pandas, numpy), rapid development |
+| Go 1.19+ | trigerr-live-streaming | High concurrency, low-latency WebSocket handling |
+| TypeScript | trigerr-web-dashboard | Type safety, React ecosystem |
+| JavaScript/Node.js | trigerr-cache-layer | Lightweight, event-driven, Redis client |
+| SQL/Shell | trigerr-database | Schema management, backups, migrations |
 
 ### Web Frameworks
 
@@ -771,7 +771,7 @@ x-idempotency-key: order-2025-06-20-001
        │
        ▼
 ┌──────────────────────┐
-│ sysstra-auth-service │
+│ trigerr-auth-service │
 │ (Key validation,     │
 │  RBAC check)         │
 └──────┬───────────────┘
@@ -816,7 +816,7 @@ x-idempotency-key: order-2025-06-20-001
 
 ### Python Versions
 
-- **sysstra-core**: Python 3.9, 3.10, 3.11, 3.12
+- **trigerr-core**: Python 3.9, 3.10, 3.11, 3.12
 - **Backend services**: Python 3.11+ (security patches)
 - **Development**: Python 3.12 (latest features)
 
@@ -911,7 +911,7 @@ main (stable, production releases)
 ### Documentation Updates
 
 - **Breaking Changes**: Update all docs immediately
-- **New Features**: Document in sysstra_package_*.md
+- **New Features**: Document in trigerr_package_*.md
 - **API Changes**: Update OpenAPI schema
 - **Examples**: Add to `/examples` directory
 - **Migration Guide**: If breaking change, provide examples
@@ -937,13 +937,13 @@ main (stable, production releases)
 
 ```
 GOOD:
-sysstra-core → data-api
-sysstra-core → orders-api
-data-api → sysstra-database
+trigerr-core → data-api
+trigerr-core → orders-api
+data-api → trigerr-database
 orders-api → broker-gateway
 
 BAD:
-sysstra-core ↔ sysstra-data-api (circular)
+trigerr-core ↔ sysstra-data-api (circular)
 data-api → orders-api → data-api (circular)
 ```
 
@@ -953,9 +953,9 @@ data-api → orders-api → data-api (circular)
 
 **Static Routing** (recommended for small systems):
 ```
-sysstra-data-api:     http://data-api.sysstra.local:8001
-sysstra-orders-api:   http://orders-api.sysstra.local:8002
-sysstra-live-stream:  ws://live.sysstra.local:8006
+sysstra-data-api:     http://data-api.trigerr.local:8001
+trigerr-orders-api:   http://orders-api.trigerr.local:8002
+trigerr-live-stream:  ws://live.trigerr.local:8006
 ```
 
 **Dynamic Discovery** (if scaling):
@@ -974,17 +974,17 @@ Load balancer automatically adds/removes instances
 | What | Location |
 |------|----------|
 | Architecture diagram | `ARCHITECTURE_OVERVIEW.md` (this file) |
-| Per-repo docs | `sysstra_package_<repo-name>.md` in each repo |
+| Per-repo docs | `trigerr_package_<repo-name>.md` in each repo |
 | API documentation | Each service's `/docs` endpoint (OpenAPI) |
-| Database schema | `sysstra-database/schema.mongodb.js` |
+| Database schema | `trigerr-database/schema.mongodb.js` |
 | Docker setup | `docker-compose.yml` in each repo |
-| Kubernetes manifests | `k8s/` directory in `sysstra-infrastructure` repo |
+| Kubernetes manifests | `k8s/` directory in `trigerr-infrastructure` repo |
 
 ### Common Commands
 
 ```bash
 # Local dev setup
-git clone https://github.com/sysstra/sysstra-core.git
+git clone https://github.com/trigerr/trigerr-core.git
 pip install -e .
 docker-compose up -d
 
@@ -998,7 +998,7 @@ black .
 mypy .
 
 # Build Docker image
-docker build -t registry.sysstra.com/sysstra-core:v0.1.4.6.3 .
+docker build -t registry.trigerr.com/trigerr-core:v0.1.4.6.3 .
 
 # Deploy to Kubernetes
 kubectl apply -f k8s/deployment.yaml
@@ -1006,10 +1006,10 @@ kubectl apply -f k8s/deployment.yaml
 
 ### Contact & Escalation
 
-- **Platform Issues**: Slack #sysstra-platform-eng
+- **Platform Issues**: Slack #trigerr-platform-eng
 - **Data Issues**: Slack #sysstra-data-team
 - **On-Call**: PagerDuty (check schedule)
-- **Architecture Questions**: Wiki or email arch-team@sysstra.com
+- **Architecture Questions**: Wiki or email arch-team@trigerr.com
 
 ---
 

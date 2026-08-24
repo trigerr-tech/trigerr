@@ -1,6 +1,6 @@
 # Technical Indicators Reference
 
-Complete reference for all 40+ technical indicators supported by Sysstra.
+Complete reference for all 40+ technical indicators supported by Trigerr.
 
 ---
 
@@ -22,7 +22,7 @@ Complete reference for all 40+ technical indicators supported by Sysstra.
 All indicators are applied using the `apply_indicators()` function:
 
 ```python
-from sysstra.sysstra_utils import apply_indicators
+from trigerr.trigerr_utils import apply_indicators
 import pandas as pd
 
 # Your OHLCV DataFrame
@@ -854,7 +854,7 @@ df['downtrend'] = (df['adx_dmn'] > df['adx_dmp']) & (df['adx'] > 20)
 **Usage**: Use `calculate_swing()` function instead of `apply_indicators()`:
 
 ```python
-from sysstra.sysstra_utils import calculate_swing
+from trigerr.trigerr_utils import calculate_swing
 
 df = calculate_swing(df, swing_setup=2, ignore_last_bar=False)
 ```
@@ -1205,7 +1205,7 @@ df['breakout_long'] = (
 ### Example 4: Swing Trading
 
 ```python
-from sysstra.sysstra_utils import calculate_swing
+from trigerr.trigerr_utils import calculate_swing
 
 indicators = {
     "RSI": {"length": 14},
@@ -1265,9 +1265,9 @@ df['swing_long_exit'] = (
 
 For indicator-specific questions or issues:
 - Check examples in `/examples` directory
-- Review the source code in `sysstra/custom_indicators.py` and `sysstra/sysstra_utils.py`
+- Review the source code in `trigerr/custom_indicators.py` and `trigerr/trigerr_utils.py`
 - Open an issue on GitHub with sample data and configuration
-- Contact support@sysstra.com
+- Contact support@trigerr.com
 
 ---
 

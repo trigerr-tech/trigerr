@@ -57,31 +57,31 @@ For multi-step tasks, state a brief plan:
 ```
 ## Project Overview
 
-Sysstra is a Python library for algorithmic trading workflows supporting equities, derivatives, commodities, and crypto markets across global exchanges. The library provides unified interfaces for historical/live data fetching, order management (backtest/virtual/live), technical indicators, and trading utilities.
+Trigerr is a Python library for algorithmic trading workflows supporting equities, derivatives, commodities, and crypto markets across global exchanges. The library provides unified interfaces for historical/live data fetching, order management (backtest/virtual/live), technical indicators, and trading utilities.
 
 ## Architecture
 
 ### Core Module Structure
 
-- **sysstra/config.py**: Central configuration for API keys and service URLs (data_url, orders_url)
-- **sysstra/data/**: Data fetching modules
+- **trigerr/config.py**: Central configuration for API keys and service URLs (data_url, orders_url)
+- **trigerr/data/**: Data fetching modules
   - `historical.py`: Historical OHLCV data via REST API (EOD, intraday, index, futures, options)
   - `live.py`: Real-time market data streaming
-- **sysstra/orders/**: Order execution modules
+- **trigerr/orders/**: Order execution modules
   - `live.py`: Live trading order placement via broker APIs
   - `virtual.py`: Paper trading simulation
   - `backtest.py`: Backtesting engine with position tracking
   - `orders_utils.py`: Shared utilities for order management
-- **sysstra/custom_indicators.py**: Custom technical indicators beyond pandas_ta (stochastic, VFI, swing calculations, etc.)
-- **sysstra/sysstra_utils.py**: Core utility functions for trading operations (swing calculation, indicator application, PnL calculations, brokerage calculation, report generation)
+- **trigerr/custom_indicators.py**: Custom technical indicators beyond pandas_ta (stochastic, VFI, swing calculations, etc.)
+- **trigerr/trigerr_utils.py**: Core utility functions for trading operations (swing calculation, indicator application, PnL calculations, brokerage calculation, report generation)
 
 ### API-Driven Design
 
 The library acts as a client to two primary backend services:
 - **Data API** (https://api.data.sysstra.com/): Fetches historical and live market data
-- **Orders API** (https://api.orders.sysstra.com/): Handles order placement, position tracking, and broker integration
+- **Orders API** (https://api.orders.trigerr.com/): Handles order placement, position tracking, and broker integration
 
-All data/order functions require API authentication via `x-api-key` header set through `sysstra.set_api_key()`.
+All data/order functions require API authentication via `x-api-key` header set through `trigerr.set_api_key()`.
 
 ### Key Patterns
 
@@ -108,7 +108,7 @@ pip install -r requirements.txt
 python setup.py sdist bdist_wheel
 
 # Install locally
-pip install dist/sysstra-<version>.tar.gz
+pip install dist/trigerr-<version>.tar.gz
 ```
 
 ### Running Tests
@@ -121,8 +121,8 @@ python examples/orders_test.py
 
 ### API Configuration
 ```python
-import sysstra
-sysstra.set_api_key("your-api-key")
+import trigerr
+trigerr.set_api_key("your-api-key")
 ```
 
 ### Data Fetching

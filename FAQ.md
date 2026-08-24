@@ -1,6 +1,6 @@
 # Frequently Asked Questions (FAQ)
 
-Common questions and solutions for using Sysstra.
+Common questions and solutions for using Trigerr.
 
 ---
 
@@ -20,9 +20,9 @@ Common questions and solutions for using Sysstra.
 
 ## Getting Started
 
-### What is Sysstra?
+### What is Trigerr?
 
-Sysstra is a Python library for algorithmic trading that provides:
+Trigerr is a Python library for algorithmic trading that provides:
 - Historical and real-time market data
 - Order execution across multiple brokers
 - 40+ technical indicators
@@ -45,19 +45,19 @@ Sysstra is a Python library for algorithmic trading that provides:
 
 ### Do I need a broker account?
 
-- **For Data**: You need a Sysstra API key (data access)
-- **For Live Trading**: You need both Sysstra API key and broker account
-- **For Backtesting**: Only Sysstra API key required
-- **For Paper Trading**: Only Sysstra API key required
+- **For Data**: You need a Trigerr API key (data access)
+- **For Live Trading**: You need both Trigerr API key and broker account
+- **For Backtesting**: Only Trigerr API key required
+- **For Paper Trading**: Only Trigerr API key required
 
 ---
 
 ## Installation & Setup
 
-### How do I install Sysstra?
+### How do I install Trigerr?
 
 ```bash
-pip install sysstra
+pip install trigerr
 ```
 
 ### What are the dependencies?
@@ -71,7 +71,7 @@ Core dependencies are automatically installed:
 
 ### How do I get an API key?
 
-1. Visit https://sysstra.com/signup
+1. Visit https://trigerr.com/signup
 2. Create an account
 3. Verify your email
 4. Navigate to API Settings
@@ -80,23 +80,23 @@ Core dependencies are automatically installed:
 ### How do I configure my API key?
 
 ```python
-import sysstra
+import trigerr
 
 # Method 1: Direct (not recommended for production)
-sysstra.set_api_key("your-api-key")
+trigerr.set_api_key("your-api-key")
 
 # Method 2: Environment variable (recommended)
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-sysstra.set_api_key(os.getenv('SYSSTRA_API_KEY'))
+trigerr.set_api_key(os.getenv('TRIGERR_API_KEY'))
 ```
 
-### How do I update Sysstra?
+### How do I update Trigerr?
 
 ```bash
-pip install --upgrade sysstra
+pip install --upgrade trigerr
 ```
 
 ---
@@ -193,7 +193,7 @@ There's no hard limit, but performance degrades with many indicators:
 
 ### Can I create custom indicators?
 
-Yes! Add to `sysstra/custom_indicators.py`:
+Yes! Add to `trigerr/custom_indicators.py`:
 
 ```python
 def my_custom_indicator(dataframe, param1, param2):
@@ -202,7 +202,7 @@ def my_custom_indicator(dataframe, param1, param2):
     return result
 ```
 
-Then add to `apply_indicators()` in `sysstra_utils.py`:
+Then add to `apply_indicators()` in `trigerr_utils.py`:
 
 ```python
 if "CUSTOM" in indicators_dict:
@@ -276,7 +276,7 @@ No single "best" indicator - combine multiple for confirmation.
 ### How do I place a live order?
 
 ```python
-from sysstra.orders import place_lt_order
+from trigerr.orders import place_lt_order
 
 status, response = place_lt_order(
     symbol="RELIANCE",
@@ -313,7 +313,7 @@ place_lt_order(..., order_type="STOPLOSS", trigger_price=1450.00)
 ### How do I check order status?
 
 ```python
-from sysstra.orders import fetch_orders_list
+from trigerr.orders import fetch_orders_list
 
 orders = fetch_orders_list(
     credential_id="your-credential-id",
@@ -372,7 +372,7 @@ status, response = place_lt_order(
 ### How do I backtest a strategy?
 
 ```python
-from sysstra.sysstra_utils import apply_indicators, calculate_brokerage, generate_mt_report
+from trigerr.trigerr_utils import apply_indicators, calculate_brokerage, generate_mt_report
 import pandas as pd
 
 # Fetch historical data
@@ -535,8 +535,8 @@ with open('cached_data.pkl', 'rb') as f:
 
 ```python
 # Make sure you call set_api_key before any data fetching
-import sysstra
-sysstra.set_api_key("your-api-key")
+import trigerr
+trigerr.set_api_key("your-api-key")
 ```
 
 ### "Invalid symbol" error
@@ -587,9 +587,9 @@ df = df.loc[:, ~df.columns.duplicated()]
 
 ## Pricing & Limits
 
-### Is Sysstra free?
+### Is Trigerr free?
 
-Sysstra is available for Enterprise use only.
+Trigerr is available for Enterprise use only.
 
 
 ### What are the rate limits?
@@ -603,7 +603,7 @@ Sysstra is available for Enterprise use only.
 
 ### Do I pay broker fees?
 
-Yes, broker fees are separate from Sysstra subscription:
+Yes, broker fees are separate from Trigerr subscription:
 - Zerodha: ₹20 per order (F&O)
 - Interactive Brokers: $0.35 min per trade
 - See [BROKERS.md](BROKERS.md) for full fee schedules
@@ -615,8 +615,8 @@ Yes, broker fees are separate from Sysstra subscription:
 - **Documentation**: Check our [README](README.md) and [API Reference](API_REFERENCE.md)
 - **Examples**: See `/examples` directory for code samples
 - **Community**: Join our Discord server (link in README)
-- **Support**: Email support@sysstra.com
-- **GitHub Issues**: https://github.com/sysstra/sysstra/issues
+- **Support**: Email support@trigerr.com
+- **GitHub Issues**: https://github.com/trigerr/trigerr/issues
 
 ---
 
