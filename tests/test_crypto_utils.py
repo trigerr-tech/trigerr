@@ -66,3 +66,20 @@ def test_tamper_detection(fernet):
     tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
     with pytest.raises(InvalidToken):
         cu.decrypt_value(tampered, fernet)
+
+
+def test_load_key_strips_whitespace_and_empty():
+    key1 = Fernet.generate_key().decode()
+    key2 = Fernet.generate_key().decode()
+
+    clean_keys = f"{key1},{key2}"
+    dirty_keys = f" {key1} , {key2},"
+
+    clean_fernet = cu.load_key(clean_keys)
+    dirty_fernet = cu.load_key(dirty_keys)
+
+    token1 = cu.encrypt_value("secret1", dirty_fernet)
+    assert cu.decrypt_value(token1, clean_fernet) == "secret1"
+
+    token2 = cu.encrypt_value("secret2", clean_fernet)
+    assert cu.decrypt_value(token2, dirty_fernet) == "secret2"
