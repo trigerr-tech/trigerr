@@ -2,6 +2,26 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
+## Hard rules (non-negotiable, apply to every task)
+
+1. **`~/PycharmProjects/sysstra-*` repos are STRICTLY read-only.** Never edit, delete, rename,
+   move, reformat, or write anything inside any `sysstra-*` folder — not even comments, logs, or
+   "harmless" fixes. They are reference material for a live production system. Every change,
+   without exception, happens inside `project-trigerr/` repos. If a fix seems needed on the
+   sysstra side, note it in the task's output for Anurag — do not make it.
+2. **No secrets in code or committed files** — not even as fallback defaults. Bootstrap secrets
+   (`CONFIG_MONGO_URI`, `TENANT`) and credentials live only in local `.env` files (gitignored).
+3. **Tenancy pattern is fixed**: config loads from the `platform_config` Mongo keyed by
+   `(tenant, scope)` with per-tenant `configs_<tenant>` views, bootstrap via `CONFIG_MONGO_URI` +
+   `TENANT`, offline fallback via `CONFIG_JSON_FILE`. Mirror
+   `trigerr-trading-strategies/sts_config.py` — do not invent new config mechanisms.
+4. **Do not touch live sysstra infrastructure**: never write to, repoint, or "test against" the
+   production Mongo/Redis/S3/webhooks whose values appear in legacy config files. Verification
+   uses local instances or `CONFIG_JSON_FILE` offline mode.
+5. **Trigerr is a separate namespace product**: new code says `trigerr` (imports, service names,
+   log names, DB/bucket seed values) — never introduce new `sysstra` identifiers.
+6. Functions over classes; minimum code that solves the problem; surgical changes only.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
