@@ -28,7 +28,7 @@ from trigerr.utils import round_strike_price
 _EXPIRY_WAIT_S = 60
 
 
-def expiry_tag(ctx, asset_class, expiry_type="current", timeout_s=_EXPIRY_WAIT_S):
+def expiry_tag(ctx, asset_class, expiry_type="current", timeout_s=None):
     """ Turn "current"/"near" into the date the collector is actually publishing.
 
     Derivative channels carry the contract's own expiry --
@@ -43,6 +43,13 @@ def expiry_tag(ctx, asset_class, expiry_type="current", timeout_s=_EXPIRY_WAIT_S
     redis_cursor = ctx.get("rdb_cursor")
     if redis_cursor is None:
         raise KeyError("expiry_tag needs ctx['rdb_cursor'] to read the expiry map")
+
+    # ctx may shorten the wait. Without this a context that never publishes the
+    # map costs the full wait per leg, so the symptom is a hang rather than the
+    # error that is actually waiting at the end of it -- which is exactly how it
+    # presented the first time a test forgot to provide one.
+    if timeout_s is None:
+        timeout_s = ctx.get("expiry_timeout_s", _EXPIRY_WAIT_S)
 
     key = f"{ctx['underlying'].replace(' ', '_')}_{asset_class}_expiries"
     deadline = time.time() + timeout_s
