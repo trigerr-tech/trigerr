@@ -48,7 +48,7 @@ symbols via `from sts_common import *`), and no dynamic-dispatch pattern (`getat
 | `sysstra.orders.virtual` | `trigerr.orders.virtual` | `place_vt_order`, `save_vt_trade` |
 | `sysstra.orders.backtest` | `trigerr.orders.backtest` | `place_bt_order` |
 | `sysstra.data.historical` | `trigerr.data.historical` | `fetch_eod_candles`, `fetch_futures_candle`, `fetch_index_candles`, `fetch_option_candles_by_symbol` |
-| `sysstra.data.live` | `trigerr.data.live` | `fetch_current_day_open`, `fetch_eod_candles_cache`, `fetch_live_candle`, `fetch_live_candles`, `fetch_live_option_candle`, `fetch_live_option_candles`, `fetch_recent_candle` |
+| `sysstra.data.live` | `trigerr.data.live` | `fetch_current_day_open`, `fetch_live_candle`, `fetch_live_candles`, `fetch_live_option_candle`, `fetch_live_option_candles`, `fetch_recent_candle` |
 | `sysstra` (top-level) | `trigerr` | `set_api_key`, `set_data_url`, `set_orders_url` |
 
 Stdlib/third-party names (`json`, `requests`, `datetime`, `math`, `time`, `tb`, `ObjectId`)

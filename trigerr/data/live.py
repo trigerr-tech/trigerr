@@ -143,16 +143,3 @@ def fetch_live_future_candles(redis_cursor, symbol):
         return None
 
 
-def fetch_eod_candles_cache(redis_cursor, symbol):
-    """ Function to fetch EOD Candles from Redis Cache """
-    try:
-        candles = redis_cursor.lrange(f"eod_{symbol}", 0, -1)
-        if candles:
-            candles_list = [json.loads(i) for i in candles]
-            print(f"total live options candles till now : {len(candles_list)}")
-            return candles_list
-        else:
-            return None
-    except Exception as e:
-        print(f"Exception in fetching cache EOD Candles : {e}")
-        return None
