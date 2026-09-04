@@ -113,7 +113,7 @@ def fetch_live_future_candle(redis_cursor, symbol):
         poc_result = redis_cursor.get(key_symbol)
         if not poc_result:
             return None
-        future_candle = json.loads(poc_result)
+        future_candle = json.loads(poc_result)[key_name]
         future_candle["close"] = future_candle["last_price"] if future_candle.get("last_price") else future_candle["close"]
         future_candle["timestamp"] = datetime.datetime.strptime(str(future_candle["timestamp"]), '%Y-%m-%d %H:%M:%S')
         future_candle["date"] = datetime.datetime.strptime(str(future_candle["timestamp"].date()), '%Y-%m-%d')
