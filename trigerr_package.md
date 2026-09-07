@@ -34,7 +34,8 @@
 - **Global market support**: NSE/BSE (India), NYSE/NASDAQ (US), Binance/CoinDCX (Crypto)
 
 The library acts as a **client to two backend services**:
-- **Data API** (https://api.data.sysstra.com/): Historical and live market data
+- **Data API** — sysstra-data-services (https://data.api.sysstra.com/): historical and live market
+  data, reached through the `sysstra_data` client package
 - **Orders API** (https://api.orders.trigerr.com/): Order placement and position tracking
 
 ---
@@ -556,9 +557,9 @@ Orders stored in Redis/MongoDB follow this structure:
 
 ```python
 config = {
-    "api_key": None,                                  # User-set via set_api_key()
-    "orders_url": "https://orders.api.trigerr.com/",  # Live trading orders API
-    "data_url": "https://api.data.sysstra.com/"       # Historical/live data API
+    "api_key": None,        # User-set via set_api_key()
+    "orders_url": None,     # User-set via set_orders_url()
+    "data_url": None,       # User-set via set_data_url() — sysstra-data-services
 }
 ```
 
@@ -588,11 +589,18 @@ trigerr.set_orders_url("https://custom-api.com/orders/")
 
 ### External Services
 
-1. **Data API** (`https://api.data.sysstra.com/`)
-   - Endpoints: `/fetch-eod-data`, `/fetch-index-data`, `/fetch-futures-data`, `/fetch-options-data`, `/fetch-options-data-by-symbol`, `/fetch-options-data-by-date`
+1. **Data API** — sysstra-data-services (`https://data.api.sysstra.com/`), via the `sysstra_data`
+   client package
+   - Candle endpoints: `/market-data/eod`, `/market-data/intraday`, `/market-data/pre-open`,
+     `/market-data/futures`, `/market-data/options`
+   - Reference endpoints: `/symbols/{symbol}`, `/expiries`
    - Authentication: `x-api-key` header
    - Request format: `{"symbol", "exchange", "from_date", "to_date", "granularity", ...}`
    - Response format: JSON array of candle objects
+   - **Not** `api.data.sysstra.com` — that is the legacy sysstra-data-api serving `/fetch-*`.
+     The hostnames are transposed and the contracts are incompatible; data-services kept no
+     aliases, so `/fetch-*` paths do not resolve there. The three by-symbol / by-date /
+     by-timestamp option lookups have no successor route and now raise `NotImplementedError`.
 
 2. **Orders API** (`https://api.orders.trigerr.com/`)
    - Endpoints: `/place-order`, `/order-status`, `/order-list`, `/cancel-order`

@@ -84,10 +84,22 @@ Trigerr is a Python library for algorithmic trading workflows supporting equitie
 ### API-Driven Design
 
 The library acts as a client to two primary backend services:
-- **Data API** (https://api.data.sysstra.com/): Fetches historical and live market data
+- **Data API** — sysstra-data-services (https://data.api.sysstra.com/), reached through the
+  `sysstra_data` client package, which speaks its `/market-data/*` contract. Historical fetches
+  go through `_get_client()` in `trigerr/data/historical.py`; reference lookups (symbols,
+  expiries) through `trigerr/data/reference.py`.
 - **Orders API** (https://api.orders.trigerr.com/): Handles order placement, position tracking, and broker integration
 
 All data/order functions require API authentication via `x-api-key` header set through `trigerr.set_api_key()`.
+
+> **Do not confuse the two data hosts.** `api.data.sysstra.com` is the *legacy* sysstra-data-api,
+> serving the older `/fetch-*` routes; `data.api.sysstra.com` is sysstra-data-services, which this
+> SDK targets. The names are transposed, the contracts are incompatible, and the migration kept no
+> aliases — a `/fetch-*` path will not resolve on data-services.
+
+> **The `sysstra_data` import is a deliberate, recorded exception to hard rule 5** (no new
+> `sysstra` identifiers), decided 2026-09-07: trigerr consumes sysstra-data-services as-is and no
+> `trigerr-data` package is planned. Keep the dependency confined to `_get_client()`.
 
 ### Key Patterns
 

@@ -1,6 +1,11 @@
 # Parity Audit — sysstra SDK → trigerr package (T3.1)
 
-**Date**: 2026-07-17 · **Auditor tier**: Fable · **Verdict**: ✅ **no gaps — safe to flip**
+> ⚠️ **SUPERSEDED — this audit describes 2026-07-17 and its verdict no longer holds.**
+> It was written the day trigerr was imported and predates every subsequent sysstra commit.
+> Re-audited 2026-09-07; the drift found is recorded in "2026-09-07 re-audit" below. Do not
+> cite the "no gaps" verdict or the `__version__ = "0.1.0"` line — both are stale.
+
+**Date**: 2026-07-17 · **Auditor tier**: Fable · **Verdict (as of that date only)**: ✅ **no gaps — safe to flip**
 
 Answers one question before T3.3 flips imports: *does the `trigerr` package provide every
 symbol the consumer repos actually pull from the legacy `sysstra` package, with identical
@@ -95,3 +100,52 @@ imported identically in the trigerr modules, so they carry over with zero risk.
 Plus: config key `sysstra_api_key` → `trigerr_api_key` in `sts_config.py` + seed files
 (loader reads new key, falls back to old for one release), and `pip install -e <trigerr repo>`
 wherever the engine/OMS venvs are built.
+
+---
+
+## 2026-09-07 re-audit
+
+**Verdict**: ❌ **trigerr was four sysstra commits behind.** The 2026-07-17 audit compared the
+two packages on the day trigerr was imported; sysstra moved on and nothing propagated. The data
+layer has since been migrated (see below); the rest is still open.
+
+### Closed by the data-services migration (2026-09-07)
+
+- `7a2c28b` / `37eea38` (2026-08-20/21) — sysstra replaced raw `requests.post` against
+  sysstra-data-api's `/fetch-*` routes with the `sysstra_data` client against
+  sysstra-data-services' `/market-data/*`. trigerr has now done the same, including the
+  `timeout=300` that the EOD cold-cache-stampede incident of 2026-08-21 prompted.
+- `6084dbb` — `fetch_pre_open_candles` was missing entirely; added.
+- `d1f2766` — `fetch_futures_candle` was missing `expiry="current"`; added last in the
+  signature so no positional caller breaks.
+- `fetch_option_candles_by_symbol` / `_by_date` / `fetch_option_candle_by_timestamp` have no
+  successor route on data-services and now raise `NotImplementedError` rather than 404-ing into
+  a swallowed `[]`. Verified zero call sites across project-trigerr.
+
+### Still open
+
+- **`e96e241` — structured logging.** sysstra replaced `print()` with `_log()` across 8 modules;
+  trigerr still has ~115 prints in the data/indicator/order paths and wires `trigerr_logging`
+  only for correlation IDs. Some `except: print(); pass` blocks also became
+  `except: _log().exception(); return dataframe`, so a few indicator functions have **different
+  fall-through return values** in the two packages.
+- **`tam_variant` has forked, and it is not just a signature.** trigerr
+  (`custom_indicators.py`) returns a single MA Series selected by `ma_type`; sysstra dropped that
+  ladder and returns the **DataFrame** with new `adx` and `dmi_matrix` columns, plus `atr_len` /
+  `adx_smoothing` parameters. The rewrite arrived inside `e96e241`, whose message mentions only
+  logging. Any strategy relying on either shape is not portable between the packages.
+- **Latent bug in trigerr's surviving `tam_variant`**: a misplaced paren makes `v8` a tuple, so
+  `ma_type="HullMA"` returns a tuple rather than a Series.
+- **`data/live.py` wire-format fork.** trigerr's `fetch_live_future_candle` unwraps
+  `json.loads(poc_result)[key_name]`, sysstra's does not (commit `64cd162`). The two packages
+  now expect structurally different Redis payloads and are **not interchangeable against a
+  shared Redis**. trigerr's version is paired with a matching change in
+  `trigerr-data-collection-in`.
+
+### Divergences from the original list that are now wrong
+
+Item 1 below ("defaults `orders_url`/`data_url` to `None` … fails loudly") is only half true:
+`data_url` unset does **not** fail loudly — the fetch raises inside a bare `except` and returns
+`[]`, so a sweep completes and writes an empty report. That is what
+`trigerr-backtesting-strategies` hit. Item 2's `__version__ = "0.1.0"` is stale; the package is
+at 0.5.0.

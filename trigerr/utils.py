@@ -6,24 +6,63 @@ import itertools
 import traceback as tb
 import requests
 from trigerr import ta as TA
-from trigerr.config import get_auth_headers
+from trigerr.config import config, get_auth_headers
+from trigerr.data.reference import fetch_symbol, fetch_expiries, strike_difference_from
 from urllib.parse import urljoin
 
 orders_url = config.get('orders_url')
 
 
-def get_symbol_details(db_cursor, symbol, market="IN"):
-    """ Function to load and get symbols dict """
+def get_symbol_details(db_cursor=None, symbol=None, market="IN"):
+    """ Function to load and get symbols dict.
+
+    Reads the reference API rather than the `all_symbols` Mongo collection. `db_cursor`
+    is accepted and ignored so the existing call sites keep working unchanged; `market`
+    is likewise ignored — the reference record carries the symbol's own market.
+
+    `strike_difference` is derived from the nearest active OPTIONS contract's strike ladder;
+    it is read only by the options branch of a strategy, so it stays None for symbols with
+    no listed contracts.
+
+    `lot_size` is the reference record's CASH lot. SymbolResponse.lot_size is documented
+    "Cash lot; derivative lots live on the expiry", so an F&O run must take the lot from
+    its own contract instead — that is unresolved here and is tracked as R4 in the plan.
+    Do not "fix" it by copying the contract lot in unconditionally: for a spot equity
+    backtest the cash lot is the correct one.
+
+    `expiry_day` has no source of truth on the reference API — a single weekday is wrong
+    for any window spanning an exchange weekday change — so it is None. Nothing reads it
+    today; the key exists because every backtest driver copies it into bt_config.
+    """
     try:
-        symbol_dict = db_cursor['all_symbols'].find_one({"name": symbol, "market": market})
-        if symbol_dict:
-            return symbol_dict
-        else:
+        record = fetch_symbol(symbol=symbol)
+        if not record:
             print("No Such Symbol Found")
             return None
+
+        details = dict(record)
+        details.setdefault("name", symbol)
+        details["expiry_day"] = None
+        details["strike_difference"] = None
+
+        contract = _nearest_option_contract(record)
+        if contract:
+            details["strike_difference"] = strike_difference_from(contract)
+        return details
     except Exception as e:
         print(f"Exception in Getting Symbols Dict : {e}")
         return None
+
+
+def _nearest_option_contract(record):
+    """ The soonest-expiring active OPTIONS contract for a symbol, or None if it has none. """
+    underlying = record.get("underlying") or record.get("symbol")
+    exchange = record.get("exchange")
+    if not underlying or not exchange:
+        return None
+    contracts = fetch_expiries(exchange=exchange, underlying=underlying, instrument_type="OPTIONS") or []
+    dated = [c for c in contracts if c.get("expiry_date")]
+    return min(dated, key=lambda c: c["expiry_date"]) if dated else None
 
 
 def change_granularity(data_df, granularity):
