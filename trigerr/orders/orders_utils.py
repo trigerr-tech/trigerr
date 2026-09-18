@@ -11,8 +11,12 @@ orders_url = config.get('orders_url')
 def add_order_to_redis(redis_cursor, request_id, order_dict, mode):
     """Function to add order to redis"""
     try:
-        redis_cursor.rpush(str(request_id) + "_orders", json.dumps(order_dict, default=str))
-        redis_cursor.publish(str(request_id) + "_orders", json.dumps(order_dict, default=str))
+        orders_key = str(request_id) + "_orders"
+        # 20h, matching common_runner.py's LOCK_TTL_S: this list is scoped to
+        # the same request/session, and nothing else expires it otherwise.
+        if redis_cursor.rpush(orders_key, json.dumps(order_dict, default=str)) == 1:
+            redis_cursor.expire(orders_key, 20 * 60 * 60)
+        redis_cursor.publish(orders_key, json.dumps(order_dict, default=str))
         redis_cursor.publish(f'{str(order_dict["user_id"])}_{mode}_orders', json.dumps(order_dict, default=str))
         # redis_cursor.publish(str(order_dict["user_id"]) + "_{}".format(mode) + "_orders", json.dumps(order_dict, default=str))
     except Exception as e:

@@ -95,8 +95,12 @@ def save_vt_trade(app_db_cursor, redis_cursor, trade_dict):
     try:
         app_db_cursor["vt_trades"].insert_one(trade_dict)
         request_id = trade_dict["request_id"]
-        redis_cursor.rpush(str(request_id) + "_trades", json.dumps(trade_dict, default=str))
-        redis_cursor.publish(str(request_id) + "_trades", json.dumps(trade_dict, default=str))
+        trades_key = str(request_id) + "_trades"
+        # 20h, matching common_runner.py's LOCK_TTL_S: this list is scoped to
+        # the same request/session, and nothing else expires it otherwise.
+        if redis_cursor.rpush(trades_key, json.dumps(trade_dict, default=str)) == 1:
+            redis_cursor.expire(trades_key, 20 * 60 * 60)
+        redis_cursor.publish(trades_key, json.dumps(trade_dict, default=str))
         redis_cursor.publish(f"{trade_dict['user_id']}_vt_trades", json.dumps(trade_dict, default=str))
     except Exception as e:
         print(f"Exception in saving VT trade in DB : {e}")
