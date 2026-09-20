@@ -13,12 +13,14 @@ from urllib.parse import urljoin
 orders_url = config.get('orders_url')
 
 
-def get_symbol_details(db_cursor=None, symbol=None, market="IN"):
+def get_symbol_details(db_cursor=None, symbol=None, market="IN", exchange=None):
     """ Function to load and get symbols dict.
 
     Reads the reference API rather than the `all_symbols` Mongo collection. `db_cursor`
     is accepted and ignored so the existing call sites keep working unchanged; `market`
     is likewise ignored — the reference record carries the symbol's own market.
+    `exchange` disambiguates a symbol listed on more than one exchange (e.g. BTCUSD on
+    DELTA_IN vs DELTA_GLOBAL) — optional, since most symbols need no disambiguation.
 
     `strike_difference` is derived from the nearest active OPTIONS contract's strike ladder;
     it is read only by the options branch of a strategy, so it stays None for symbols with
@@ -35,7 +37,7 @@ def get_symbol_details(db_cursor=None, symbol=None, market="IN"):
     today; the key exists because every backtest driver copies it into bt_config.
     """
     try:
-        record = fetch_symbol(symbol=symbol)
+        record = fetch_symbol(symbol=symbol, exchange=exchange)
         if not record:
             print("No Such Symbol Found")
             return None
@@ -1478,7 +1480,7 @@ def send_order_alert(alert_dict):
         pass
 
 
-def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", market_type="options", order_type="MARKET", lot_size=100, position_type="LONG", holding_type="intraday", no_of_orders=2, market="IN", exchange="NSE"):
+def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", market_type="options", order_type="MARKET", lot_size=100, position_type="LONG", holding_type="intraday", no_of_orders=2, market="IN", exchange="NSE", spot_price=None, exit_spot_price=None, underlying=None):
     """Function to calculate brokerage"""
     try:
 
@@ -1616,6 +1618,47 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
 
             net_pnl = gross_profit - total_charges
             return total_charges, net_pnl
+
+        elif broker == "delta":
+            # Delta Exchange India charges on notional — spot price x quantity x contract size — not on the
+            # premium, once on entry and once on exit, plus 18% GST. Options are capped at 3.5% of the premium,
+            # which is what deep OTM contracts actually pay. Leverage decides the margin a notional needs, never
+            # the fee, so it is already inside quantity. spot_price/exit_spot_price are the underlying at each
+            # fill; without them the traded price is used, which is right for futures and wrong for options.
+            # Futures/spot: BTCUSD/ETHUSD are maker 0.02% / taker 0.05% per Delta's own published fee
+            # schedule (delta.exchange/support, 2026-09-18) — LIMIT approximates maker, MARKET approximates
+            # taker (a LIMIT order that crosses the book fills as taker, but the order type is the only
+            # signal calculate_brokerage has). XAUTUSD is NOT on that page and is verified flat 0.0001
+            # regardless of order type against a real XAUTUSD transaction log (2026-09-18, 15 closed fills,
+            # mixed limit/market, exact match) — do not assume it generalizes to other underlyings without
+            # separately verifying each one; XAUT and BTC/ETH are evidently on different fee tiers.
+            gst_rate = 0.18
+            entry_spot = spot_price if spot_price else buy_price
+            exit_spot = exit_spot_price if exit_spot_price else entry_spot
+
+            if market_type == "options":
+                fee_rate = 0.0001
+                premium_cap_rate = 0.035
+                entry_fees = min(fee_rate * entry_spot * quantity, premium_cap_rate * buy_price * quantity)
+                exit_fees = min(fee_rate * exit_spot * quantity, premium_cap_rate * sell_price * quantity)
+            elif underlying and "XAUT" in underlying.upper():
+                fee_rate = 0.0001
+                entry_fees = fee_rate * entry_spot * quantity
+                exit_fees = fee_rate * exit_spot * quantity
+            else:
+                fee_rate = 0.0002 if order_type == "LIMIT" else 0.0005
+                entry_fees = fee_rate * entry_spot * quantity
+                exit_fees = fee_rate * exit_spot * quantity
+
+            total_charges = round((entry_fees + exit_fees) * (1 + gst_rate), 4)
+
+            if position_type.upper() == "SHORT":
+                gross_pnl = (buy_price - sell_price) * quantity
+            else:
+                gross_pnl = (sell_price - buy_price) * quantity
+
+            net_pl = round(gross_pnl - total_charges, 2)
+            return total_charges, net_pl
 
         elif broker == "schwab":
             if market_type == "options":

@@ -189,22 +189,25 @@ def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker,
                         trade_dict[input_key] = order[input_key]
 
             else:
+                # A crypto contract is a fraction of a coin (0.001 BTC), so whole-unit rounding would discard
+                # most of the P&L; every other market keeps the whole-number rounding it was tested with.
+                pnl_decimals = 2 if trade_dict.get("market") == "CRYPTO" else None
                 if market_type == "spot" or market_type == "futures":
                     if order["position_type"] == "SHORT":
                         points = trade_dict["entry_price"] - order["trigger_price"]
-                        trade_dict["points"] += round(points)
-                        trade_dict["pnl"] += round(order["quantity"] * points)
+                        trade_dict["points"] += round(points, pnl_decimals)
+                        trade_dict["pnl"] += round(order["quantity"] * points, pnl_decimals)
                     else:
                         points = order["trigger_price"] - trade_dict["entry_price"]
-                        trade_dict["points"] += round(points)
-                        trade_dict["pnl"] += round(order["quantity"] * points)
+                        trade_dict["points"] += round(points, pnl_decimals)
+                        trade_dict["pnl"] += round(order["quantity"] * points, pnl_decimals)
                 else:
                     if order["position_type"] == "SHORT":
                         points = trade_dict["entry_price"] - order["trigger_price"]
                     else:
                         points = order["trigger_price"] - trade_dict["entry_price"]
-                    trade_dict["points"] += round(points)
-                    trade_dict["pnl"] += round(order["quantity"] * points * trade_dict["lot_size"])
+                    trade_dict["points"] += round(points, pnl_decimals)
+                    trade_dict["pnl"] += round(order["quantity"] * points * trade_dict["lot_size"], pnl_decimals)
 
                 if trade_dict["exit_type"]:
                     trade_dict["exit_type"] += "|" + order["exit_type"]
@@ -216,10 +219,18 @@ def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker,
                     trade_dict["exit_price"] = order["trigger_price"]
                     tmp_market_type = "equity" if market_type == "spot" else market_type
 
+                    # Exit-side details the strategy priced the fill with; a broker charging on the underlying
+                    # (Delta) needs the spot at each fill rather than the premium.
+                    for exit_key in ("exit_reason", "exit_spot_price"):
+                        if order.get(exit_key) is not None:
+                            trade_dict[exit_key] = order[exit_key]
+
                     brokerage, net_pnl = calculate_brokerage(buy_price=trade_dict["entry_price"], sell_price=trade_dict["exit_price"],
                                                              quantity=order["quantity"] * trade_dict["lot_size"], broker=broker, market_type=tmp_market_type,
                                                              lot_size=trade_dict["lot_size"], order_type=order["order_type"], position_type=order["position_type"],
-                                                             holding_type=holding_type, market=trade_dict["market"], exchange=trade_dict["exchange"], no_of_orders=2
+                                                             holding_type=holding_type, market=trade_dict["market"], exchange=trade_dict["exchange"], no_of_orders=2,
+                                                             spot_price=trade_dict.get("spot_price") or None, exit_spot_price=order.get("exit_spot_price") or None,
+                                                             underlying=trade_dict.get("stock")
                                                              )
                     trade_dict["brokerage"] += brokerage
 
@@ -240,7 +251,9 @@ def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker,
                     brokerage, net_pnl = calculate_brokerage(buy_price=trade_dict["entry_price"], sell_price=order["trigger_price"],
                                                              quantity=order["quantity"] * trade_dict["lot_size"], broker=broker, market_type=tmp_market_type,
                                                              lot_size=trade_dict["lot_size"], order_type=order["order_type"], position_type=order["position_type"],
-                                                             holding_type=holding_type, market=trade_dict["market"], exchange=trade_dict["exchange"], no_of_orders=2)
+                                                             holding_type=holding_type, market=trade_dict["market"], exchange=trade_dict["exchange"], no_of_orders=2,
+                                                             spot_price=trade_dict.get("spot_price") or None, exit_spot_price=order.get("exit_spot_price") or None,
+                                                             underlying=trade_dict.get("stock"))
                     trade_dict["brokerage"] += brokerage
                     trade_dict["net_pnl"] += net_pnl
         return trades_array
