@@ -4,8 +4,13 @@ __version__ = "0.5.0"
 
 
 def set_api_key(key):
-    """ Function to set api key """
+    """ Function to set the data-services api key """
     config["api_key"] = key
+
+
+def set_orders_api_key(key):
+    """ Function to set the orders API key """
+    config["orders_api_key"] = key
 
 
 def set_data_url(url):

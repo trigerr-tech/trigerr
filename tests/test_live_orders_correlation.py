@@ -88,8 +88,8 @@ def test_check_order_status_carries_bound_request_id():
 
 
 def test_place_live_order_still_sends_auth_headers():
-    from trigerr import set_api_key
-    set_api_key("test-key")
+    from trigerr import set_orders_api_key
+    set_orders_api_key("test-key")
     try:
         with patch("trigerr.orders.live.requests.post") as mock_post:
             mock_post.return_value = _mock_response({"status": "SUCCESS"})
@@ -97,7 +97,7 @@ def test_place_live_order_still_sends_auth_headers():
         assert mock_post.call_args.kwargs["headers"] == {"x-api-key": "test-key"}
     finally:
         import trigerr
-        trigerr.config["api_key"] = None
+        trigerr.config["orders_api_key"] = None
 
 
 def test_validate_credential_success():
