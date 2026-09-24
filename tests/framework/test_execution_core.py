@@ -26,6 +26,10 @@ class FakeState:
         self.live_candles = {}
         self.recent_candles = {}
         self.investment_updates = []
+        self.order_cursors = []
+
+
+STATE_CURSOR = object()
 
 
 def _base_ctx(state, mode="vt", legs=None):
@@ -36,6 +40,9 @@ def _base_ctx(state, mode="vt", legs=None):
         # Derivative legs resolve their channel from the expiry map the
         # collector publishes, so a leg cannot be built without one.
         "rdb_cursor": _ExpiryMap(),
+        # Orders and request status live in the tenant's state Redis, apart
+        # from market data; a plain sentinel, since the order sinks are stubbed.
+        "state_cursor": STATE_CURSOR,
         "user_id": "u1", "strategy_id": "s1", "request_id": "r1", "credential_id": "c1",
         "symbol": "NIFTY", "underlying": "NIFTY", "market": "IN", "exchange": "XNSE",
         "symbols_dict": {"strike_difference": 50, "lot_size": 25, "max_qpo": 1800},
@@ -64,6 +71,7 @@ def _patch_order_sinks(monkeypatch, state):
                  "order_timestamp": datetime.datetime(2026, 1, 1, 9, 20)}
         order.update(kwargs.get("params") or {})
         state.orders.append(order)
+        state.order_cursors.append(kwargs.get("redis_cursor"))
         return list(state.orders)
 
     def fake_place_lt_order(**kwargs):
@@ -154,6 +162,20 @@ def test_place_entry_order_for_leg_vt_success(monkeypatch):
     assert leg["leg_key"] in ctx["legs"]
     assert leg["order_params"]["leg_key"] == "PE"
     assert state.orders[-1]["trade_action"] == "ENTRY"
+
+
+def test_vt_entry_order_goes_to_the_state_cursor_not_the_market_data_one(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
+    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
+    leg = {"leg_key": "PE", "side": "BUY", "instrument": {"selector": "atm_option", "option_type": "PE"},
+           "exit_symbol": "NIFTY_23450_PE_2026-08-27", "strike_price": 23450, "option_type": "PE",
+           "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
+
+    assert ec.place_entry_order_for_leg(ctx, leg) is True
+    assert state.order_cursors == [STATE_CURSOR]
 
 
 def test_place_entry_order_for_leg_vt_fails_without_live_candle(monkeypatch):

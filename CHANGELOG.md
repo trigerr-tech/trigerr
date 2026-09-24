@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-09-24
+
+### Changed
+- `framework.execution_core` sends every order, trade, orders-list and
+  investment call to `ctx["state_cursor"]` (the tenant's state Redis) instead
+  of `ctx["rdb_cursor"]`, which now carries market data only. Framework
+  harnesses must put both cursors in ctx. Breaking for any harness that sets
+  only `rdb_cursor`.
+
+---
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

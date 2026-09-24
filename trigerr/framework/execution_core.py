@@ -165,7 +165,7 @@ def place_entry_order_for_leg(ctx, leg):
         leg["order_params"] = build_leg_order_params(ctx, leg)
 
         orders_list = place_vt_order(
-            app_db_cursor=ctx["app_db_cursor"], redis_cursor=rdb_cursor, order_candle=order_candle,
+            app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], order_candle=order_candle,
             quantity=leg["quantity"], quantity_left=leg["quantity"], position_type=leg["position_type"],
             transaction_type=leg["transaction_type"], order_type=inputs.get("order_type", "MARKET"),
             exit_type=None, trade_action="ENTRY", lot_size=leg["lot_size"],
@@ -211,7 +211,7 @@ def place_entry_order_for_leg(ctx, leg):
         leg["order_params"] = build_leg_order_params(ctx, leg)
 
         _, orders_list = save_lt_order(
-            app_db_cursor=ctx["app_db_cursor"], redis_cursor=rdb_cursor, orders_list=ctx.get("orders_list", []),
+            app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], orders_list=ctx.get("orders_list", []),
             symbol=order_candle["symbol"], quantity=quantity, quantity_left=quantity,
             position_type=leg["position_type"], transaction_type=leg["transaction_type"], trade_action="ENTRY",
             order_type="MARKET", exit_type=None, params=leg["order_params"], market_type=ctx["market_type"],
@@ -240,7 +240,7 @@ def _unwind_filled_legs(ctx, filled_legs):
         exit_transaction = "SELL" if leg["position_type"] == "LONG" else "BUY"
         if ctx["mode"] == "vt":
             place_vt_order(
-                app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["rdb_cursor"],
+                app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"],
                 order_candle={"symbol": leg["tradingsymbol"], "timestamp": datetime.datetime.now(),
                              "close": leg["entry_price"]},
                 quantity=leg["quantity_left"], quantity_left=0, position_type=leg["position_type"],
@@ -380,7 +380,7 @@ def convert_leg_orders_to_trade(ctx):
     closed, booking a mixed trade while the other leg was still open). Saves
     one trade record per leg (matching legacy's convert_straddle_trades),
     each stamped with the position's combined net pnl across every leg. """
-    orders_list = fetch_orders_list(redis_cursor=ctx["rdb_cursor"], request_id=str(ctx["request_id"]))
+    orders_list = fetch_orders_list(redis_cursor=ctx["state_cursor"], request_id=str(ctx["request_id"]))
     ctx["orders_list"] = orders_list
     last_order = orders_list[-1] if orders_list else None
     if last_order and last_order.get("exit_type") == "MANUAL":
@@ -392,9 +392,9 @@ def convert_leg_orders_to_trade(ctx):
     for trade in leg_trades.values():
         trade["combined_pnl"] = net
         if ctx["mode"] == "vt":
-            save_vt_trade(app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["rdb_cursor"], trade_dict=trade)
+            save_vt_trade(app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], trade_dict=trade)
         else:
-            save_lt_trade(app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["rdb_cursor"], trade_dict=trade)
+            save_lt_trade(app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], trade_dict=trade)
 
 
 def place_exit_order_for_leg(ctx, leg, exit_type, candle):
@@ -416,7 +416,7 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
     if ctx["mode"] == "vt":
         leg["quantity_left"] -= exit_quantity
         ctx["orders_list"] = place_vt_order(
-            app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["rdb_cursor"], order_candle=candle,
+            app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], order_candle=candle,
             position_type=leg["position_type"], quantity=exit_quantity, quantity_left=leg["quantity_left"],
             transaction_type=exit_transaction, order_type=inputs.get("order_type", "MARKET"),
             exit_type=exit_type, params=leg["order_params"], lot_size=leg["lot_size"], trade_action="EXIT",
@@ -446,7 +446,7 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
 
         leg["quantity_left"] -= exit_quantity
         _, orders_list = save_lt_order(
-            app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["rdb_cursor"], orders_list=ctx["orders_list"],
+            app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], orders_list=ctx["orders_list"],
             symbol=leg["tradingsymbol"], quantity=exit_quantity, quantity_left=leg["quantity_left"],
             position_type=leg["position_type"], transaction_type=exit_transaction, order_type="MARKET",
             exit_type=exit_type, params=leg["order_params"], market_type=ctx["market_type"], trade_action="EXIT",
@@ -568,7 +568,7 @@ def apply_compounding_to_investment(ctx):
     inputs = ctx["parameters"]
     if not inputs.get("apply_compounding"):
         return
-    orders_list = fetch_orders_list(redis_cursor=ctx["rdb_cursor"], request_id=ctx["request_id"])
+    orders_list = fetch_orders_list(redis_cursor=ctx["state_cursor"], request_id=ctx["request_id"])
     leg_trades = _split_leg_trades(ctx, orders_list)
     if leg_trades is None:
         return
@@ -584,5 +584,5 @@ def apply_compounding_to_investment(ctx):
         investment = int(inputs["initial_investment"])
     ctx["investment"] = investment
     ctx["sizing"]["investment"] = investment
-    ctx["update_investment"](app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["rdb_cursor"],
+    ctx["update_investment"](app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"],
                              request_id=ctx["request_id"], mode=ctx["mode"], investment=investment)
