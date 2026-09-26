@@ -74,10 +74,12 @@ def _base_ctx(state, mode="vt", legs=None):
 def _patch_order_sinks(monkeypatch, state):
     def fake_place_vt_order(order_candle, quantity, quantity_left, position_type, transaction_type,
                             exit_type, trade_action, **kwargs):
-        order = {"tradingsymbol": order_candle.get("symbol"), "quantity": quantity,
+        order = {"symbol": order_candle.get("symbol"), "quantity": quantity,
                  "quantity_left": quantity_left, "position_type": position_type,
                  "transaction_type": transaction_type, "exit_type": exit_type, "trade_action": trade_action,
-                 "order_timestamp": datetime.datetime(2026, 1, 1, 9, 20)}
+                 "order_timestamp": datetime.datetime(2026, 1, 1, 9, 20),
+                 "data_key": kwargs.get("data_key"), "venue": kwargs.get("venue"),
+                 "group_id": kwargs.get("group_id"), "leg_key": kwargs.get("leg_key")}
         order.update(kwargs.get("params") or {})
         state.orders.append(order)
         state.order_cursors.append(kwargs.get("redis_cursor"))
@@ -93,7 +95,9 @@ def _patch_order_sinks(monkeypatch, state):
         return "success", {"average_price": 100.0, "timestamp": datetime.datetime(2026, 1, 1, 9, 20, 5)}
 
     def fake_save_lt_order(orders_list, symbol, quantity, quantity_left, params, **kwargs):
-        order = {"tradingsymbol": symbol, "quantity": quantity, "quantity_left": quantity_left}
+        order = {"symbol": symbol, "quantity": quantity, "quantity_left": quantity_left,
+                 "data_key": kwargs.get("data_key"), "venue": kwargs.get("venue"),
+                 "group_id": kwargs.get("group_id"), "leg_key": kwargs.get("leg_key")}
         order.update(params or {})
         state.orders.append(order)
         return "success", list(state.orders)
@@ -102,7 +106,7 @@ def _patch_order_sinks(monkeypatch, state):
         return list(state.orders)
 
     def fake_check_existing_order(symbol, exit_type, orders_list, entry_time):
-        return any(o.get("tradingsymbol") == symbol and o.get("exit_type") == exit_type for o in orders_list)
+        return any(o.get("symbol") == symbol and o.get("exit_type") == exit_type for o in orders_list)
 
     def fake_convert_to_trades(orders_list, **kwargs):
         if any(o.get("trade_action") == "EXIT" for o in orders_list):
@@ -320,13 +324,71 @@ def test_enter_legs_partial_fill_unwinds_and_aborts(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# enter_legs — sequencing (spec §8.2) and group_id (spec §8.1)
+# ---------------------------------------------------------------------------
+
+def test_enter_legs_places_in_sequence_order_and_stamps_one_group_id(monkeypatch):
+    """ Iron fly: authored shorts-first (SELL CE, SELL PE), wings-last (BUY
+    CE, BUY PE) — sequence() must still place both wings before both
+    shorts, and every leg of the entry shares one group_id. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ctx["feeds"]["spot"] = [SPOT_CANDLE]
+    for symbol, price in [("NIFTY_23450_CE_2026-08-27", 50), ("NIFTY_23450_PE_2026-08-27", 45),
+                          ("NIFTY_23550_CE_2026-08-27", 10), ("NIFTY_23350_PE_2026-08-27", 12)]:
+        state.ticks[_dk(symbol)] = _tick(price, symbol=symbol)
+        state.recent_candles[_dk(symbol)] = _candle(price, symbol=symbol)
+
+    legs = [
+        {"leg_key": "short_ce", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "CE"}},
+        {"leg_key": "short_pe", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "PE"}},
+        {"leg_key": "wing_ce", "side": "BUY",
+         "instrument": {"selector": "strike_offset_option", "option_type": "CE", "offset": 100}},
+        {"leg_key": "wing_pe", "side": "BUY",
+         "instrument": {"selector": "strike_offset_option", "option_type": "PE", "offset": 100}},
+    ]
+    assert ec.enter_legs(ctx, legs) == "entered"
+
+    assert [o["transaction_type"] for o in state.orders] == ["BUY", "BUY", "SELL", "SELL"]
+    group_ids = {o["group_id"] for o in state.orders}
+    assert group_ids == {"r1:2026-01-01:1"}, "dated by the entry candle, not the wall clock"
+
+
+def test_enter_legs_second_entry_of_same_request_gets_next_group_id(monkeypatch):
+    """ n = 1 + the groups already opened that day -- a second entry after the
+    first went flat gets ":2". A previous day's group and a legacy order with
+    no group (Redis stores it as the string "None") do not count. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ctx["feeds"]["spot"] = [SPOT_CANDLE]
+    # A prior entry (now flat) already recorded on this request.
+    state.orders = [
+        {"symbol": "NIFTY_23450_PE_2026-08-27", "group_id": "r1:2025-12-31:1", "trade_action": "ENTRY"},
+        {"symbol": "NIFTY_23450_PE_2026-08-27", "group_id": "None", "trade_action": "ENTRY"},
+        {"symbol": "NIFTY_23450_PE_2026-08-27", "group_id": "r1:2026-01-01:1", "trade_action": "ENTRY"},
+        {"symbol": "NIFTY_23450_PE_2026-08-27", "group_id": "r1:2026-01-01:1", "trade_action": "EXIT"},
+    ]
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(45, symbol="NIFTY_23450_PE_2026-08-27")
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(45, symbol="NIFTY_23450_PE_2026-08-27")
+
+    legs = [{"leg_key": "PE", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "PE"}}]
+    assert ec.enter_legs(ctx, legs) == "entered"
+
+    new_orders = state.orders[4:]
+    assert len(new_orders) == 1
+    assert new_orders[0]["group_id"] == "r1:2026-01-01:2"
+
+
+# ---------------------------------------------------------------------------
 # place_exit_order_for_leg / convert_leg_orders_to_trade — defect #3
 # ---------------------------------------------------------------------------
 
-def _entered_leg(leg_key, entry_price=100, quantity=10):
+def _entered_leg(leg_key, entry_price=100, quantity=10, position_type="LONG", group_id="r1:1"):
     return {"leg_key": leg_key, "tradingsymbol": f"SYM_{leg_key}", "exit_symbol": f"SYM_{leg_key}",
-           "data_key": _dk(f"SYM_{leg_key}"),
-           "position_type": "LONG",
+           "data_key": _dk(f"SYM_{leg_key}"), "group_id": group_id,
+           "position_type": position_type,
            "quantity": quantity, "quantity_left": quantity, "entry_price": entry_price,
            "sl_price": 70, "trailing_sl": 70, "t1_price": 101, "t2_price": None, "t3_price": None,
            "entry_time": datetime.datetime(2026, 1, 1, 9, 20), "lot_size": 25, "order_exchange": "NFO",
@@ -376,7 +438,7 @@ def test_place_exit_order_for_leg_skips_an_already_placed_exit_level(monkeypatch
     ctx = _base_ctx(state, mode="vt")
     leg = _entered_leg("PE")
     ctx["legs"] = {"PE": leg}
-    ctx["orders_list"] = [{"tradingsymbol": "SYM_PE", "exit_type": "T1"}]
+    ctx["orders_list"] = [{"symbol": "SYM_PE", "exit_type": "T1"}]
     ec.place_exit_order_for_leg(ctx, leg, "T1", _candle(101))
     assert leg["quantity_left"] == 10  # unchanged - check_existing_order short-circuited
 
@@ -415,6 +477,17 @@ def test_rebuild_legs_falls_back_to_option_type_when_no_leg_key_saved():
                               "trigger_price": 45, "order_timestamp": "2026-01-01 09:20:00"}}
     ec.rebuild_legs_from_open_orders(ctx, open_orders)
     assert "PE" in ctx["legs"]
+
+
+def test_rebuild_legs_restores_group_id():
+    """ A restarted request's exits must reuse the position's own group_id
+    (spec §8.1), not mint a new one. """
+    ctx = _base_ctx(FakeState(), mode="vt")
+    open_orders = {"SYM_CE": {"leg_key": "CE", "option_type": "CE", "position_type": "SHORT",
+                              "quantity_left": 10, "trigger_price": 50,
+                              "order_timestamp": "2026-01-01 09:20:00", "group_id": "r1:1"}}
+    ec.rebuild_legs_from_open_orders(ctx, open_orders)
+    assert ctx["legs"]["CE"]["group_id"] == "r1:1"
 
 
 def test_rebuild_legs_calls_plugin_on_restart_hook():
@@ -549,3 +622,35 @@ def test_monitor_open_position_exits_and_stops_when_all_legs_flat(monkeypatch):
     ec.monitor_open_position(ctx)
     assert leg["quantity_left"] == 0
     assert len(state.saved_vt_trades) == 1
+
+
+def test_monitor_open_position_sequences_multi_leg_exits_buy_before_sell(monkeypatch):
+    """ A 4-leg short-premium position (2 SHORT legs, 2 LONG wings) all
+    exiting on the same candle (e.g. MARKETEXIT square-off) must place the
+    two BUY-to-close orders (the SHORT legs) before the two SELL-to-close
+    orders (the LONG legs) — spec §8.2, no unhedged moment. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    legs = {
+        "wing_ce": _entered_leg("wing_ce", position_type="LONG"),
+        "wing_pe": _entered_leg("wing_pe", position_type="LONG"),
+        "short_ce": _entered_leg("short_ce", position_type="SHORT"),
+        "short_pe": _entered_leg("short_pe", position_type="SHORT"),
+    }
+    ctx["legs"] = legs
+    # Authored SELL-side (wings) first, on purpose -- sequencing must still
+    # place the BUY-to-close (shorts) orders first.
+    ctx["plugin"] = types.SimpleNamespace(
+        check_exit_condition=lambda c: {"wing_ce": "MARKETEXIT", "wing_pe": "MARKETEXIT",
+                                        "short_ce": "MARKETEXIT", "short_pe": "MARKETEXIT"})
+
+    exit_candle = _candle(105)
+    ctx["tick_source"] = iter([(datetime.datetime(2026, 1, 1, 9, 21), {"spot": [exit_candle]})])
+    for leg_key in legs:
+        state.recent_candles[_dk(f"SYM_{leg_key}")] = exit_candle
+
+    ec.monitor_open_position(ctx)
+
+    assert [o["transaction_type"] for o in state.orders] == ["BUY", "BUY", "SELL", "SELL"]
+    assert all(leg["quantity_left"] == 0 for leg in legs.values())

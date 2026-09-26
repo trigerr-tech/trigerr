@@ -50,13 +50,23 @@ def save_lt_order(app_db_cursor, redis_cursor, orders_list, symbol, quantity, qu
                   exit_type=None, params=None, market_type="options", trigger_price=None, lot_size=25,
                   user_id=None, strategy_id=None, request_id=None, exchange="NSE", exchange_timestamp=None,
                   order_id=None, broker_response=None, sl_order_id=None, validity="DAY", market="IN", holding_type="INTRADAY",
-                  asset_type="EQUITY", option_type=None, strike_price=None, underlying=None, expiry_date=None, max_qpo=None):
+                  asset_type="EQUITY", option_type=None, strike_price=None, underlying=None, expiry_date=None, max_qpo=None,
+                  data_key=None, venue=None, group_id=None, leg_key=None, broker=None, broker_symbol=None):
     """ Function to save order in Database """
     try:
         order_dict = {
             "market": market,
-            "tradingsymbol": symbol,
+            "symbol": symbol,
+            # `exchange` (the mixed NFO/XNSE value) is kept alongside `venue` until Track B2
+            # (OMS §8.3) translates venue -> broker segment; brokerage calc and the OMS still consume it.
             "exchange": exchange,
+            "venue": venue,
+            "data_key": data_key,
+            "group_id": group_id,
+            "leg_key": leg_key,
+            # filled later from the OMS response (Track B2); store what's passed for now.
+            "broker": broker,
+            "broker_symbol": broker_symbol,
             "user_id": user_id,
             "strategy_id": strategy_id,
             "request_id": request_id,

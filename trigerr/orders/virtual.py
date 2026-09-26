@@ -8,7 +8,8 @@ def place_vt_order(app_db_cursor, redis_cursor, order_candle, quantity, quantity
                    position_type="LONG", transaction_type="BUY", trade_action="ENTRY", exit_type=None,
                    order_type="MARKET", trigger_price=None, lot_size=15,
                    user_id=None, strategy_id=None, request_id=None, market="IN", params=None,
-                   holding_type="intraday", market_type="equity", exchange="NSE"):
+                   holding_type="intraday", market_type="equity", exchange="NSE",
+                   data_key=None, venue=None, group_id=None, leg_key=None):
     """ Function to Place Virtual Trading Order """
     try:
         order_dict = {
@@ -16,13 +17,19 @@ def place_vt_order(app_db_cursor, redis_cursor, order_candle, quantity, quantity
             "strategy_id": strategy_id,
             "request_id": request_id,
             "market": market,
+            # `exchange` (the mixed NFO/XNSE value) is kept alongside `venue` until Track B2
+            # (OMS §8.3) translates venue -> broker segment; brokerage calc and the OMS still consume it.
             "exchange": exchange,
+            "venue": venue,
             "holding_type": holding_type,
             "market_type": market_type,
             "date": datetime.datetime.strptime(str(datetime.datetime.today().date()), '%Y-%m-%d'),
             "order_timestamp": datetime.datetime.now().replace(microsecond=0),
             "day": order_candle["timestamp"].strftime("%A"),
-            "tradingsymbol": order_candle.get("symbol", ""),
+            "symbol": order_candle.get("symbol", ""),
+            "data_key": data_key,
+            "group_id": group_id,
+            "leg_key": leg_key,
             "quantity": quantity,
             "quantity_left": quantity_left,
             "position_type": position_type,  # LONG or SHORT

@@ -34,7 +34,7 @@ import datetime
 
 from trigerr.orders.virtual import place_vt_order, save_vt_trade
 from trigerr.orders.live import place_lt_order, save_lt_order, poll_order_status, save_lt_trade
-from trigerr.orders.orders_utils import fetch_orders_list, convert_to_trades, check_existing_order
+from trigerr.orders.orders_utils import fetch_orders_list, convert_to_trades, check_existing_order, sequence
 from trigerr.data.market import ltp, last_candle
 from trigerr.utils import fetch_available_funds, calculate_funds, calculate_exit_quantity
 
@@ -172,9 +172,10 @@ def place_entry_order_for_leg(ctx, leg):
             exit_type=None, trade_action="ENTRY", lot_size=leg["lot_size"],
             user_id=ctx["user_id"], strategy_id=ctx["strategy_id"], request_id=ctx["request_id"],
             market=ctx["market"], market_type=ctx["market_type"], exchange=leg["order_exchange"],
-            params=leg["order_params"])
+            params=leg["order_params"], data_key=leg["data_key"], venue=ctx["venue"],
+            group_id=leg.get("group_id"), leg_key=leg["leg_key"])
         leg["entry_time"] = _as_datetime(orders_list[-1]["order_timestamp"])
-        leg["tradingsymbol"] = orders_list[-1]["tradingsymbol"]
+        leg["tradingsymbol"] = orders_list[-1]["symbol"]
         leg["db_order_id"] = orders_list[-1].get("db_order_id")
         ctx["orders_list"] = orders_list
 
@@ -222,7 +223,8 @@ def place_entry_order_for_leg(ctx, leg):
             broker_response=live_response, option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
             underlying=ctx["underlying"], validity=inputs.get("order_validity", "DAY"),
             asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
-            max_qpo=ctx["symbols_dict"].get("max_qpo"), market=ctx["market"])
+            max_qpo=ctx["symbols_dict"].get("max_qpo"), market=ctx["market"],
+            data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
         leg["entry_time"] = _as_datetime(live_response["timestamp"])
         leg["tradingsymbol"] = order_candle["symbol"]
         leg["db_order_id"] = orders_list[-1].get("db_order_id")
@@ -236,9 +238,14 @@ def place_entry_order_for_leg(ctx, leg):
 def _unwind_filled_legs(ctx, filled_legs):
     """ Immediately market-exits every already-filled leg when a sibling leg
     in the same multi-leg entry failed, instead of leaving a naked position
-    (ports strat_strdl_eios.py:727). """
-    for leg in filled_legs:
-        exit_transaction = "SELL" if leg["position_type"] == "LONG" else "BUY"
+    (ports strat_strdl_eios.py:727). Exits are sequenced BUY-before-SELL
+    (spec §8.2), same as any other multi-leg exit pass, so a SHORT leg
+    (exit = BUY) closes before a LONG leg (exit = SELL). """
+    exit_orders = [{"transaction_type": "SELL" if leg["position_type"] == "LONG" else "BUY", "leg": leg}
+                  for leg in filled_legs]
+    for exit_order in sequence(exit_orders):
+        leg = exit_order["leg"]
+        exit_transaction = exit_order["transaction_type"]
         if ctx["mode"] == "vt":
             place_vt_order(
                 app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"],
@@ -248,7 +255,8 @@ def _unwind_filled_legs(ctx, filled_legs):
                 transaction_type=exit_transaction, order_type="MARKET", exit_type="MANUAL",
                 trade_action="EXIT", lot_size=leg["lot_size"], user_id=ctx["user_id"],
                 strategy_id=ctx["strategy_id"], request_id=ctx["request_id"], market=ctx["market"],
-                market_type=ctx["market_type"], exchange=leg["order_exchange"], params=leg.get("order_params"))
+                market_type=ctx["market_type"], exchange=leg["order_exchange"], params=leg.get("order_params"),
+                data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
             msg = f"Unwound {leg['leg_key']} (vt, MANUAL) after a sibling leg failed to enter."
         else:
             unwind_status, unwind_response = place_lt_order(
@@ -262,6 +270,22 @@ def _unwind_filled_legs(ctx, filled_legs):
             msg = (f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) after a sibling leg failed: "
                   f"{unwind_status} | {unwind_response}. Verify positions manually.")
         _alert(ctx, msg, "Leg Unwind")
+
+
+def _next_group_id(ctx, entry_date):
+    """ One group_id per entry: {request_id}:{YYYY-MM-DD}:{n} (spec §8.1).
+
+    The date keeps ids unique over a request's life: its orders list in Redis
+    lives ~20h, so a bare counter would restart at 1 each day and merge two
+    days' positions into one group. entry_date is the entry candle's own date,
+    so a backtest replaying past days numbers each day correctly. n counts the
+    groups already opened that day. Orders pushed through Redis carry an unset
+    group_id as the string "None", which the prefix match never counts. """
+    prefix = f"{ctx['request_id']}:{entry_date.isoformat()}:"
+    orders_list = ctx.get("orders_list") or fetch_orders_list(redis_cursor=ctx["state_cursor"],
+                                                              request_id=str(ctx["request_id"]))
+    seen = {o.get("group_id") for o in (orders_list or [])}
+    return f"{prefix}{1 + sum(1 for g in seen if isinstance(g, str) and g.startswith(prefix))}"
 
 
 def enter_legs(ctx, legs):
@@ -279,8 +303,12 @@ def enter_legs(ctx, legs):
         resolved_leg["order_exchange"] = resolve_exchange_for_leg(ctx["exchange"], resolved_leg["instrument"]["selector"])
         resolved_legs.append(resolved_leg)
 
-    filled, failed = [], []
+    group_id = _next_group_id(ctx, _as_datetime(clock_rows[-1]["timestamp"]).date())
     for leg in resolved_legs:
+        leg["group_id"] = group_id
+
+    filled, failed = [], []
+    for leg in sequence(resolved_legs):
         if place_entry_order_for_leg(ctx, leg):
             filled.append(leg)
         else:
@@ -423,7 +451,8 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             exit_type=exit_type, params=leg["order_params"], lot_size=leg["lot_size"], trade_action="EXIT",
             trigger_price=_exit_trigger_price(ctx, leg, exit_type, candle),
             user_id=ctx["user_id"], strategy_id=ctx["strategy_id"], request_id=ctx["request_id"],
-            market=ctx["market"], market_type=ctx["market_type"], exchange=leg["order_exchange"])
+            market=ctx["market"], market_type=ctx["market_type"], exchange=leg["order_exchange"],
+            data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
 
     else:
         order_status, lt_response = place_lt_order(
@@ -455,7 +484,8 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             strategy_id=ctx["strategy_id"], request_id=ctx["request_id"], exchange=leg["order_exchange"],
             exchange_timestamp=live_response["timestamp"], order_id=lt_response["order_id"],
             broker_response=live_response, option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
-            underlying=ctx["underlying"])
+            underlying=ctx["underlying"], data_key=leg["data_key"], venue=ctx["venue"],
+            group_id=leg.get("group_id"), leg_key=leg["leg_key"])
         ctx["orders_list"] = orders_list
 
     if all(l["quantity_left"] == 0 for l in ctx["legs"].values()):
@@ -498,11 +528,19 @@ def monitor_open_position(ctx):
         decisions = check_exit_condition(ctx) if check_exit_condition else \
             evaluate_exit_triggers(ctx, ctx["exit_rules"]["triggers"])
 
+        # Several legs can exit on the same candle (e.g. MARKETEXIT square-off) - sequence
+        # them BUY-before-SELL (spec §8.2) so a SHORT leg's exit (a BUY) closes first.
+        exit_orders = []
         for leg_key, exit_types in decisions.items():
             leg = legs[leg_key]
             for exit_type in ([exit_types] if isinstance(exit_types, str) else exit_types or []):
                 if leg["quantity_left"] > 0:
-                    place_exit_order_for_leg(ctx, leg, exit_type, leg.get("candle", ctx.get("spot_candle")))
+                    exit_side = "SELL" if leg["position_type"] == "LONG" else "BUY"
+                    exit_orders.append({"transaction_type": exit_side, "leg": leg, "exit_type": exit_type})
+
+        for exit_order in sequence(exit_orders):
+            leg = exit_order["leg"]
+            place_exit_order_for_leg(ctx, leg, exit_order["exit_type"], leg.get("candle", ctx.get("spot_candle")))
 
         after_exits = getattr(plugin, "after_exit_orders_placed", None)
         if after_exits:
@@ -546,6 +584,7 @@ def rebuild_legs_from_open_orders(ctx, open_orders):
             "order_exchange": order.get("exchange") or ctx["exchange"],
             "exit_symbol": order.get("underlying") or tradingsymbol,
             "data_key": order.get("data_key"),
+            "group_id": order.get("group_id"),
             "order_params": {k: order[k] for k in ("underlying", "spot_price", "investment") if k in order},
         }
         ctx["legs"][leg_key] = leg

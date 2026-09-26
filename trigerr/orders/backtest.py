@@ -31,7 +31,7 @@ def place_bt_order(order_candle, quantity, position_type="LONG", transaction_typ
             order_dict["trigger_price"] = order_candle["close"]
 
         order_dict["order_timestamp"] = str(order_candle["timestamp"])
-        order_dict["tradingsymbol"] = order_candle.get("symbol")
+        order_dict["symbol"] = order_candle.get("symbol")
         order_dict["date"] = str(order_candle["date"])
 
         order_dict["expiry"] = order_candle.get("expiry", "")

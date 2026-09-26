@@ -71,7 +71,7 @@ def check_open_orders(orders_list):
         if orders_list:
             quantity_dict = {}
             for order in orders_list:
-                trade_symbol = order["tradingsymbol"]
+                trade_symbol = order["symbol"]
                 quantity_dict[trade_symbol] = {}
                 quantity_dict[trade_symbol]["buy_quantity"] = 0
                 quantity_dict[trade_symbol]["sell_quantity"] = 0
@@ -81,7 +81,7 @@ def check_open_orders(orders_list):
                 quantity_dict[trade_symbol]["quantity_left"] = 0
 
             for order in orders_list:
-                trade_symbol = order["tradingsymbol"]
+                trade_symbol = order["symbol"]
                 if order["trade_action"] == "ENTRY":
                     # Adding Must Have Fields
                     quantity_dict[trade_symbol]["underlying"] = order.get("underlying", "")
@@ -143,7 +143,11 @@ def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker,
         for order in orders_list:
             if order["trade_action"] == "ENTRY":
                 trade_dict["date"] = order["date"]
-                trade_dict["stock"] = order["tradingsymbol"]
+                trade_dict["stock"] = order["symbol"]
+                # New multi-leg/data-source fields (spec §8.1), copied from the order onto the trade.
+                trade_dict["symbol"] = order["symbol"]
+                trade_dict["data_key"] = order.get("data_key")
+                trade_dict["group_id"] = order.get("group_id")
                 trade_dict["exchange"] = order.get("exchange", "NSE")
                 trade_dict["market"] = order.get("market", "IN")
                 trade_dict["lot_size"] = order["lot_size"]
@@ -276,12 +280,17 @@ def check_existing_order(symbol, exit_type, orders_list, entry_time):
             except Exception as b:
                 et_time = datetime.datetime.strptime(str(entry_time), '%Y-%m-%d %H:%M:%S')
 
-            if order["tradingsymbol"] == symbol and order["exit_type"] == exit_type and ot_time >= et_time:
+            if order["symbol"] == symbol and order["exit_type"] == exit_type and ot_time >= et_time:
                 return True
         return False
     except Exception as e:
         print(f"Exception in checking existing order : {e}")
         pass
+
+
+def sequence(orders):
+    """ every BUY before every SELL (stable) — spec §8.2 """
+    return sorted(orders, key=lambda o: o["transaction_type"] != "BUY")
 
 
 # def check_order_status(credential_id, order_id, exchange):
