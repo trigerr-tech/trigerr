@@ -1,6 +1,6 @@
 """ The one execution core: the only place orders get placed, polled, and
 exited, for bt, vt and lt alike. Everything here calls already-pure SDK
-functions (trigerr.orders.*, trigerr.data.live) that take their Mongo/Redis
+functions (trigerr.orders.*, trigerr.data.market) that take their Mongo/Redis
 cursors as parameters rather than importing a driver — so this module needs
 none itself. Alerting is the one engine-owned side effect that has no pure
 equivalent; it is injected as ctx["create_alert"] (bound to the real
@@ -24,9 +24,9 @@ Six things fixed here, inline, as the design rather than as patches:
      legs).
 
 One place mode still matters, on purpose: a leg's own candle for exit pricing
-is fetched live (vt/lt, via fetch_recent_candle) but falls back to the clock
-candle in bt, since no strike-aware historical options feed is resolved after
-entry here (that would need historical option data fetched reactively once a
+is fetched live (vt/lt, via last_candle) but falls back to the clock candle
+in bt, since no strike-aware historical options feed is resolved after entry
+here (that would need historical option data fetched reactively once a
 strike is known - out of scope; this preserves, not introduces, the original
 harness's bt-side simplification for options legs). """
 
@@ -35,7 +35,7 @@ import datetime
 from trigerr.orders.virtual import place_vt_order, save_vt_trade
 from trigerr.orders.live import place_lt_order, save_lt_order, poll_order_status, save_lt_trade
 from trigerr.orders.orders_utils import fetch_orders_list, convert_to_trades, check_existing_order
-from trigerr.data.live import fetch_live_candle, fetch_recent_candle
+from trigerr.data.market import ltp, last_candle
 from trigerr.utils import fetch_available_funds, calculate_funds, calculate_exit_quantity
 
 from trigerr.framework.instrument import resolve_leg_to_tradable_symbol, resolve_exchange_for_leg
@@ -132,17 +132,18 @@ def place_entry_order_for_leg(ctx, leg):
     inputs = ctx["parameters"]
     rdb_cursor = ctx["rdb_cursor"]
 
-    live_candle = fetch_live_candle(rdb_cursor, leg["exit_symbol"])
-    if not live_candle:
+    tick = ltp(rdb_cursor, leg["data_key"])
+    if not tick:
         ctx["logger"].warning(f"No live data for {leg['exit_symbol']}")
         return False
-    order_candle = fetch_recent_candle(rdb_cursor, leg["exit_symbol"]) or live_candle
-    # fetch_live_candle already parses its own timestamp; fetch_recent_candle
-    # (a raw Redis list read) does not - place_vt_order needs a real datetime.
-    order_candle = {**order_candle, "timestamp": _as_datetime(order_candle["timestamp"])}
+    recent = last_candle(rdb_cursor, leg["data_key"], "1m")
+    # The order's own price/time come off the tick (the freshest read); the
+    # recent candle is only a timestamp fallback for a tick missing one.
+    order_candle = {"symbol": leg["exit_symbol"], "close": tick["last_price"],
+                    "timestamp": tick.get("ts_exchange") or (recent["timestamp"] if recent else None)}
 
-    if not _entry_pricing_window_ok(ctx, live_candle["close"]):
-        ctx["logger"].warning(f"Entry price {live_candle['close']} outside today's pricing window")
+    if not _entry_pricing_window_ok(ctx, order_candle["close"]):
+        ctx["logger"].warning(f"Entry price {order_candle['close']} outside today's pricing window")
         return False
 
     # Optional: strategies whose exit triggers measure moves directly off
@@ -154,7 +155,7 @@ def place_entry_order_for_leg(ctx, leg):
     sl_percent = float(inputs.get("c1_sl_percent", inputs.get("sl_percent", 0)))
 
     if ctx["mode"] == "vt":
-        entry_price = live_candle["close"]
+        entry_price = order_candle["close"]
         leg["entry_price"] = entry_price
         leg.update(calculate_target_and_stoploss_prices(entry_price, leg["position_type"], t1_percent, sl_percent))
         leg["trailing_sl"] = leg["sl_price"]
@@ -471,11 +472,9 @@ def _refresh_leg_candles(ctx):
         if ctx["mode"] == "bt":
             leg["candle"] = clock_candle
         else:
-            # fetch_recent_candle is a raw Redis list read - unlike the clock
-            # feed (already normalized by tick_sources), its timestamp needs
-            # parsing before any exit condition or place_vt_order sees it.
-            recent = fetch_recent_candle(ctx["rdb_cursor"], leg["exit_symbol"])
-            leg["candle"] = {**recent, "timestamp": _as_datetime(recent["timestamp"])} if recent else clock_candle
+            # last_candle already parses its own timestamp, unlike the old
+            # fetch_recent_candle raw Redis list read this replaces.
+            leg["candle"] = last_candle(ctx["rdb_cursor"], leg["data_key"], "1m") or clock_candle
 
 
 def monitor_open_position(ctx):
@@ -546,6 +545,7 @@ def rebuild_legs_from_open_orders(ctx, open_orders):
             "lot_size": order.get("lot_size", ctx["lot_size"]),
             "order_exchange": order.get("exchange") or ctx["exchange"],
             "exit_symbol": order.get("underlying") or tradingsymbol,
+            "data_key": order.get("data_key"),
             "order_params": {k: order[k] for k in ("underlying", "spot_price", "investment") if k in order},
         }
         ctx["legs"][leg_key] = leg

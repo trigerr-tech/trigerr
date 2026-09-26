@@ -10,7 +10,7 @@ from trigerr.framework.catalog import build_block_catalog
 from trigerr.framework.data_feeds import resolve_feeds
 from trigerr.framework.point_in_time import truncate_feeds_to_moment
 from trigerr.framework.clock import iterate_clock_bt, evaluate_should_trade_today
-from trigerr.framework.tick_sources import live_pubsub_ticks, clock_feed_ticks_live
+from trigerr.framework.tick_sources import clock_feed_ticks_live
 from trigerr.framework.execution_core import (
     wait_for_entry_signal, monitor_open_position, enter_legs, place_entry_order_for_leg,
     place_exit_order_for_leg, convert_leg_orders_to_trade, rebuild_legs_from_open_orders,

@@ -5,20 +5,23 @@ from trigerr.framework.instrument import (resolve_leg_to_tradable_symbol, resolv
 
 
 class FakeRedis:
-    """ The expiry map the collector writes when a lane starts. """
+    """ The expiry map the collector writes when a lane starts, keyed
+    {VENUE}:{UNDERLYING}:{asset_class}:expiries. """
 
     def __init__(self, hashes=None):
         self.hashes = hashes if hashes is not None else {
-            "NIFTY_options_expiries": {"current": "2026-08-27", "near": "2026-09-24"},
-            "NIFTY_futures_expiries": {"current": "2026-08-27"},
+            "XNSE:NIFTY:options:expiries": {"current": "2026-08-27", "near": "2026-09-24"},
+            "XNSE:NIFTY:futures:expiries": {"current": "2026-08-27"},
         }
 
     def hget(self, key, field):
         return (self.hashes.get(key) or {}).get(field)
 
 
-def _ctx(spot_price=23456, strike_difference=50, lot_size=25, redis_cursor=None):
-    return {"underlying": "NIFTY", "lot_size": lot_size, "spot_price": spot_price,
+def _ctx(spot_price=23456, strike_difference=50, lot_size=25, redis_cursor=None,
+        venue="XNSE", data_vendor="upstox", underlying="NIFTY"):
+    return {"underlying": underlying, "lot_size": lot_size, "spot_price": spot_price,
+            "venue": venue, "data_vendor": data_vendor,
             "rdb_cursor": redis_cursor if redis_cursor is not None else FakeRedis(),
             "symbols_dict": {"strike_difference": strike_difference, "lot_size": lot_size}}
 
@@ -29,6 +32,17 @@ def test_spot_selector():
     assert leg["position_type"] == "LONG"
     assert leg["transaction_type"] == "BUY"
     assert leg["lot_size"] == 1
+    assert leg["data_key"] == "UPSTOX:XNSE:NIFTY"
+
+
+def test_spot_selector_index_underlying_uses_the_canonical_symbol():
+    """ ctx["underlying"] stays the master's display name ("NIFTY 50"); the
+    exit_symbol/data_key are built from the canonical grammar, not it directly. """
+    ctx = _ctx(underlying="NIFTY 50")
+    ctx["instrument_type"] = "INDEX"
+    leg = resolve_leg_to_tradable_symbol(ctx, {"side": "BUY", "instrument": {"selector": "spot"}})
+    assert leg["exit_symbol"] == "NIFTY_50"
+    assert leg["data_key"] == "UPSTOX:XNSE:NIFTY_50"
 
 
 def test_futures_selector():
@@ -36,6 +50,7 @@ def test_futures_selector():
     assert leg["exit_symbol"] == "NIFTY_FUTURES_2026-08-27"
     assert leg["position_type"] == "SHORT"
     assert leg["lot_size"] == 25
+    assert leg["data_key"] == "UPSTOX:XNSE:NIFTY_FUTURES_2026-08-27"
 
 
 def test_atm_option_selector():
@@ -45,6 +60,18 @@ def test_atm_option_selector():
     assert leg["exit_symbol"] == "NIFTY_23450_PE_2026-08-27"
     assert leg["option_type"] == "PE"
     assert leg["leg_key"] == "PE"
+    assert leg["data_key"] == "UPSTOX:XNSE:NIFTY_23450_PE_2026-08-27"
+
+
+def test_atm_strike_on_a_fractional_grid_keeps_the_fraction_not_truncated():
+    """ round_strike_price floors onto the strike grid (unchanged ATM
+    semantics every strategy relies on); on a fractional strike_difference
+    (e.g. 2.5) the result must keep its fraction -- 162.5, never int() to 162. """
+    leg = resolve_leg_to_tradable_symbol(
+        _ctx(spot_price=163.7, strike_difference=2.5),
+        {"side": "BUY", "instrument": {"selector": "atm_option", "option_type": "CE"}})
+    assert leg["strike_price"] == 162.5
+    assert leg["exit_symbol"] == "NIFTY_162.5_CE_2026-08-27"
 
 
 def test_strike_offset_option_selector_otm_and_itm():
@@ -85,6 +112,15 @@ def test_resolve_exchange_for_leg_routes_derivatives_to_fo_segment():
     assert resolve_exchange_for_leg("OTHER", "atm_option") == "OTHER"
 
 
+# --- data_key / ctx requirements --------------------------------------------
+
+def test_missing_data_vendor_raises_clear_keyerror():
+    ctx = _ctx()
+    del ctx["data_vendor"]
+    with pytest.raises(KeyError, match="data_vendor"):
+        resolve_leg_to_tradable_symbol(ctx, {"side": "BUY", "instrument": {"selector": "spot"}})
+
+
 # --- absolute expiry resolution -------------------------------------------
 
 def test_expiry_tag_reads_what_the_collector_published():
@@ -93,10 +129,16 @@ def test_expiry_tag_reads_what_the_collector_published():
     assert expiry_tag(_ctx(), "futures") == "2026-08-27"
 
 
+def test_expiry_tag_key_format_includes_venue_and_underlying():
+    redis = FakeRedis({"XBSE:SENSEX:options:expiries": {"current": "2026-08-27"}})
+    ctx = _ctx(redis_cursor=redis, venue="XBSE", underlying="SENSEX")
+    assert expiry_tag(ctx, "options") == "2026-08-27"
+
+
 def test_expiry_tag_decodes_bytes():
     """ redis-py returns bytes unless decode_responses is set, and the
     strategies' cursor does not set it. """
-    redis = FakeRedis({"NIFTY_options_expiries": {"current": b"2026-08-27"}})
+    redis = FakeRedis({"XNSE:NIFTY:options:expiries": {"current": b"2026-08-27"}})
     assert expiry_tag(_ctx(redis_cursor=redis), "options") == "2026-08-27"
 
 
@@ -104,8 +146,15 @@ def test_missing_expiry_map_raises_rather_than_guessing():
     """ Falling back to a relative name resolves to whatever board that name
     points at -- right until the day it silently is not, and the strategy
     cannot tell the difference from the data. """
-    with pytest.raises(LookupError, match="NIFTY_options_expiries"):
+    with pytest.raises(LookupError, match="XNSE:NIFTY:options:expiries"):
         expiry_tag(_ctx(redis_cursor=FakeRedis({})), "options", timeout_s=0)
+
+
+def test_expiry_tag_requires_ctx_venue():
+    ctx = _ctx()
+    del ctx["venue"]
+    with pytest.raises(KeyError, match="venue"):
+        expiry_tag(ctx, "options")
 
 
 def test_channel_carries_the_board_the_leg_is_actually_on():

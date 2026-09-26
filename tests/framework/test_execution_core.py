@@ -15,6 +15,14 @@ class _ExpiryMap:
         return {"current": "2026-08-27", "near": "2026-09-24"}.get(field)
 
 
+DATA_VENDOR = "upstox"
+VENUE = "XNSE"
+
+
+def _dk(symbol):
+    return f"{DATA_VENDOR.upper()}:{VENUE}:{symbol}"
+
+
 class FakeState:
     def __init__(self):
         self.orders = []
@@ -23,7 +31,7 @@ class FakeState:
         self.alerts = []
         self.saved_vt_trades = []
         self.saved_lt_trades = []
-        self.live_candles = {}
+        self.ticks = {}
         self.recent_candles = {}
         self.investment_updates = []
         self.order_cursors = []
@@ -45,6 +53,7 @@ def _base_ctx(state, mode="vt", legs=None):
         "state_cursor": STATE_CURSOR,
         "user_id": "u1", "strategy_id": "s1", "request_id": "r1", "credential_id": "c1",
         "symbol": "NIFTY", "underlying": "NIFTY", "market": "IN", "exchange": "XNSE",
+        "venue": VENUE, "data_vendor": DATA_VENDOR,
         "symbols_dict": {"strike_difference": 50, "lot_size": 25, "max_qpo": 1800},
         "lot_size": 25, "broker": "zerodha",
         "market_config": {"entry_pricing": WIDE_OPEN_PRICING},
@@ -109,8 +118,8 @@ def _patch_order_sinks(monkeypatch, state):
     monkeypatch.setattr(ec, "convert_to_trades", fake_convert_to_trades)
     monkeypatch.setattr(ec, "save_vt_trade", lambda **k: state.saved_vt_trades.append(k))
     monkeypatch.setattr(ec, "save_lt_trade", lambda **k: state.saved_lt_trades.append(k))
-    monkeypatch.setattr(ec, "fetch_live_candle", lambda redis_cursor, symbol: state.live_candles.get(symbol))
-    monkeypatch.setattr(ec, "fetch_recent_candle", lambda redis_cursor, symbol: state.recent_candles.get(symbol))
+    monkeypatch.setattr(ec, "ltp", lambda redis_cursor, data_key: state.ticks.get(data_key))
+    monkeypatch.setattr(ec, "last_candle", lambda redis_cursor, data_key, tf: state.recent_candles.get(data_key))
     monkeypatch.setattr(ec, "fetch_available_funds", lambda credential_id: 500000)
     monkeypatch.setattr(ec, "calculate_funds", lambda investment, available_funds: min(investment, available_funds))
 
@@ -120,10 +129,17 @@ def _pe_leg(leg_key="PE"):
 
 
 def _candle(close, minute=20, symbol="NIFTY_23450_PE_2026-08-27"):
-    """ enter_legs re-resolves every leg, so the seeded key must be the channel
-    the resolver produces -- which now carries the contract's own expiry. """
+    """ enter_legs re-resolves every leg, so the seeded key must be the
+    data_key the resolver produces -- which now carries the contract's own
+    expiry. Used as last_candle()'s fake return value. """
     return {"symbol": symbol, "timestamp": datetime.datetime(2026, 1, 1, 9, minute),
             "open": close, "high": close + 1, "low": close - 1, "close": close}
+
+
+def _tick(last_price, symbol="NIFTY_23450_PE_2026-08-27", ts=datetime.datetime(2026, 1, 1, 9, 20)):
+    """ ltp()'s fake return value -- the entry price now comes off the tick's
+    own last_price, not a candle's close. """
+    return {"symbol": symbol, "last_price": last_price, "ts_exchange": ts}
 
 
 # ---------------------------------------------------------------------------
@@ -148,11 +164,12 @@ def test_place_entry_order_for_leg_vt_success(monkeypatch):
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="vt")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100)
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(100)
 
     leg = {"leg_key": "PE", "side": "BUY", "instrument": {"selector": "atm_option", "option_type": "PE"},
-          "exit_symbol": "NIFTY_23450_PE_2026-08-27", "strike_price": 23450, "option_type": "PE",
+          "exit_symbol": "NIFTY_23450_PE_2026-08-27", "data_key": _dk("NIFTY_23450_PE_2026-08-27"),
+          "strike_price": 23450, "option_type": "PE",
           "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
 
     assert ec.place_entry_order_for_leg(ctx, leg) is True
@@ -168,10 +185,11 @@ def test_vt_entry_order_goes_to_the_state_cursor_not_the_market_data_one(monkeyp
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="vt")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100)
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(100)
     leg = {"leg_key": "PE", "side": "BUY", "instrument": {"selector": "atm_option", "option_type": "PE"},
-           "exit_symbol": "NIFTY_23450_PE_2026-08-27", "strike_price": 23450, "option_type": "PE",
+           "exit_symbol": "NIFTY_23450_PE_2026-08-27", "data_key": _dk("NIFTY_23450_PE_2026-08-27"),
+           "strike_price": 23450, "option_type": "PE",
            "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
 
     assert ec.place_entry_order_for_leg(ctx, leg) is True
@@ -182,8 +200,8 @@ def test_place_entry_order_for_leg_vt_fails_without_live_candle(monkeypatch):
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="vt")
-    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "lot_size": 25,
-          "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
+    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "data_key": _dk("NIFTY_23450_PE_2026-08-27"),
+          "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
     assert ec.place_entry_order_for_leg(ctx, leg) is False
     assert state.orders == []
 
@@ -195,9 +213,9 @@ def test_place_entry_order_for_leg_rejects_outside_pricing_window(monkeypatch):
     ctx["market_config"]["entry_pricing"] = {
         day: [{"start_price": 0, "end_price": 0}]  # nothing is ever in-window
         for day in WIDE_OPEN_PRICING}
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "lot_size": 25,
-          "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100)
+    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "data_key": _dk("NIFTY_23450_PE_2026-08-27"),
+          "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
     assert ec.place_entry_order_for_leg(ctx, leg) is False
 
 
@@ -205,11 +223,11 @@ def test_place_entry_order_for_leg_lt_success_polls_then_saves(monkeypatch):
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="lt")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100)
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(100)
 
-    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "lot_size": 25,
-          "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO",
+    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "data_key": _dk("NIFTY_23450_PE_2026-08-27"),
+          "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO",
           "option_type": "PE", "strike_price": 23450}
     assert ec.place_entry_order_for_leg(ctx, leg) is True
     assert leg["entry_price"] == 100.0  # from the scripted poll response
@@ -222,10 +240,10 @@ def test_place_entry_order_for_leg_lt_alerts_on_placement_failure(monkeypatch):
     _patch_order_sinks(monkeypatch, state)
     monkeypatch.setattr(ec, "place_lt_order", lambda **k: ("error", {"message": "rejected"}))
     ctx = _base_ctx(state, mode="lt")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "lot_size": 25,
-          "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100)
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(100)
+    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "data_key": _dk("NIFTY_23450_PE_2026-08-27"),
+          "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
     assert ec.place_entry_order_for_leg(ctx, leg) is False
     assert len(state.alerts) == 1
     assert "Live Order Error" in state.alerts[0]["title"]
@@ -236,10 +254,10 @@ def test_place_entry_order_for_leg_lt_alerts_on_polling_failure(monkeypatch):
     _patch_order_sinks(monkeypatch, state)
     state.poll_script = [("failed", {"message": "timeout"})]
     ctx = _base_ctx(state, mode="lt")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100)
-    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "lot_size": 25,
-          "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100)
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(100)
+    leg = {"leg_key": "PE", "exit_symbol": "NIFTY_23450_PE_2026-08-27", "data_key": _dk("NIFTY_23450_PE_2026-08-27"),
+          "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
     assert ec.place_entry_order_for_leg(ctx, leg) is False
     assert any("Entry Polling Error" in a["title"] for a in state.alerts)
 
@@ -256,10 +274,10 @@ def test_enter_legs_all_fill(monkeypatch):
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="vt")
     ctx["feeds"]["spot"] = [SPOT_CANDLE]
-    state.live_candles["NIFTY_23450_CE_2026-08-27"] = _candle(50, symbol="NIFTY_23450_CE_2026-08-27")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(45, symbol="NIFTY_23450_PE_2026-08-27")
-    state.recent_candles["NIFTY_23450_CE_2026-08-27"] = _candle(50, symbol="NIFTY_23450_CE_2026-08-27")
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(45, symbol="NIFTY_23450_PE_2026-08-27")
+    state.ticks[_dk("NIFTY_23450_CE_2026-08-27")] = _tick(50, symbol="NIFTY_23450_CE_2026-08-27")
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(45, symbol="NIFTY_23450_PE_2026-08-27")
+    state.recent_candles[_dk("NIFTY_23450_CE_2026-08-27")] = _candle(50, symbol="NIFTY_23450_CE_2026-08-27")
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(45, symbol="NIFTY_23450_PE_2026-08-27")
 
     legs = [{"leg_key": "CE", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "CE"}},
             {"leg_key": "PE", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "PE"}}]
@@ -286,9 +304,9 @@ def test_enter_legs_partial_fill_unwinds_and_aborts(monkeypatch):
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="vt")
     ctx["feeds"]["spot"] = [SPOT_CANDLE]
-    state.live_candles["NIFTY_23450_CE_2026-08-27"] = _candle(50, symbol="NIFTY_23450_CE_2026-08-27")
-    state.recent_candles["NIFTY_23450_CE_2026-08-27"] = _candle(50, symbol="NIFTY_23450_CE_2026-08-27")
-    # PE has no live candle -> its entry fails
+    state.ticks[_dk("NIFTY_23450_CE_2026-08-27")] = _tick(50, symbol="NIFTY_23450_CE_2026-08-27")
+    state.recent_candles[_dk("NIFTY_23450_CE_2026-08-27")] = _candle(50, symbol="NIFTY_23450_CE_2026-08-27")
+    # PE has no live tick -> its entry fails
 
     legs = [{"leg_key": "CE", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "CE"}},
             {"leg_key": "PE", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "PE"}}]
@@ -307,6 +325,7 @@ def test_enter_legs_partial_fill_unwinds_and_aborts(monkeypatch):
 
 def _entered_leg(leg_key, entry_price=100, quantity=10):
     return {"leg_key": leg_key, "tradingsymbol": f"SYM_{leg_key}", "exit_symbol": f"SYM_{leg_key}",
+           "data_key": _dk(f"SYM_{leg_key}"),
            "position_type": "LONG",
            "quantity": quantity, "quantity_left": quantity, "entry_price": entry_price,
            "sl_price": 70, "trailing_sl": 70, "t1_price": 101, "t2_price": None, "t3_price": None,
@@ -473,8 +492,8 @@ def test_wait_for_entry_signal_uses_the_compiled_entry_rule(monkeypatch):
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="vt")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100, symbol="NIFTY_23450_PE_2026-08-27")
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100, symbol="NIFTY_23450_PE_2026-08-27")
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100, symbol="NIFTY_23450_PE_2026-08-27")
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(100, symbol="NIFTY_23450_PE_2026-08-27")
 
     when = {"op": ">", "args": [{"op": "ref", "name": "close", "ctx": {"feed": "spot"}}, {"op": "lit", "value": 23000}]}
     ctx["plan"] = _plan_with_entry(when, [_pe_leg()])
@@ -489,8 +508,8 @@ def test_wait_for_entry_signal_prefers_check_entry_condition_escape_hatch(monkey
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="vt")
-    state.live_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100, symbol="NIFTY_23450_PE_2026-08-27")
-    state.recent_candles["NIFTY_23450_PE_2026-08-27"] = _candle(100, symbol="NIFTY_23450_PE_2026-08-27")
+    state.ticks[_dk("NIFTY_23450_PE_2026-08-27")] = _tick(100, symbol="NIFTY_23450_PE_2026-08-27")
+    state.recent_candles[_dk("NIFTY_23450_PE_2026-08-27")] = _candle(100, symbol="NIFTY_23450_PE_2026-08-27")
 
     ctx["plan"] = _plan_with_entry(None, [])
     ctx["plugin"] = types.SimpleNamespace(check_entry_condition=lambda c: [_pe_leg()])
@@ -525,7 +544,7 @@ def test_monitor_open_position_exits_and_stops_when_all_legs_flat(monkeypatch):
 
     exit_candle = _candle(105)
     ctx["tick_source"] = iter([(datetime.datetime(2026, 1, 1, 9, 21), {"spot": [exit_candle]})])
-    state.recent_candles["SYM_PE"] = exit_candle
+    state.recent_candles[_dk("SYM_PE")] = exit_candle
 
     ec.monitor_open_position(ctx)
     assert leg["quantity_left"] == 0

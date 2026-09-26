@@ -21,6 +21,7 @@ source exists. """
 import datetime
 import time
 
+from trigerr.symbols import canonical_symbol, data_key
 from trigerr.utils import round_strike_price
 
 # The collector writes the expiry map when a lane starts, so a strategy
@@ -43,6 +44,8 @@ def expiry_tag(ctx, asset_class, expiry_type="current", timeout_s=None):
     redis_cursor = ctx.get("rdb_cursor")
     if redis_cursor is None:
         raise KeyError("expiry_tag needs ctx['rdb_cursor'] to read the expiry map")
+    if "venue" not in ctx:
+        raise KeyError("expiry_tag needs ctx['venue'] to read the expiry map")
 
     # ctx may shorten the wait. Without this a context that never publishes the
     # map costs the full wait per leg, so the symptom is a hang rather than the
@@ -51,7 +54,8 @@ def expiry_tag(ctx, asset_class, expiry_type="current", timeout_s=None):
     if timeout_s is None:
         timeout_s = ctx.get("expiry_timeout_s", _EXPIRY_WAIT_S)
 
-    key = f"{ctx['underlying'].replace(' ', '_')}_{asset_class}_expiries"
+    underlying = ctx["underlying"].replace(" ", "_")
+    key = f"{ctx['venue']}:{underlying}:{asset_class}:expiries"
     deadline = time.time() + timeout_s
     while True:
         tag = redis_cursor.hget(key, expiry_type)
@@ -65,34 +69,56 @@ def expiry_tag(ctx, asset_class, expiry_type="current", timeout_s=None):
         time.sleep(0.5)
 
 
+def _expiry_date(ctx, asset_class, expiry_type="current"):
+    """ expiry_tag's published tag ("2026-08-27"), as a date -- canonical_symbol
+    builds the contract symbol from a real date, not a pre-formatted string. """
+    tag = expiry_tag(ctx, asset_class, expiry_type)
+    return datetime.datetime.strptime(tag, "%Y-%m-%d").date()
+
+
+def _set_data_key(ctx, leg):
+    if "data_vendor" not in ctx:
+        raise KeyError("resolvers need ctx['data_vendor'] to build leg['data_key']")
+    leg["data_key"] = data_key(ctx["data_vendor"], ctx["venue"], leg["exit_symbol"])
+
+
 def _resolve_spot(ctx, leg):
-    leg["exit_symbol"] = ctx["underlying"]
+    instrument_type = ctx.get("instrument_type", "EQUITY")
+    leg["exit_symbol"] = canonical_symbol(instrument_type, ctx["underlying"])
     leg["lot_size"] = leg.get("lot_size", 1)
     leg["option_type"] = None
     leg["strike_price"] = None
+    _set_data_key(ctx, leg)
 
 
 def _resolve_futures(ctx, leg):
-    leg["exit_symbol"] = (f"{ctx['underlying'].replace(' ', '_')}_FUTURES"
-                          f"_{expiry_tag(ctx, 'futures')}")
+    expiry = _expiry_date(ctx, "futures")
+    leg["exit_symbol"] = canonical_symbol("FUTURES", ctx["underlying"], expiry=expiry)
     leg["lot_size"] = leg.get("lot_size", ctx["lot_size"])
     leg["option_type"] = None
     leg["strike_price"] = None
+    _set_data_key(ctx, leg)
 
 
 def _atm_strike(ctx, leg):
+    """ The grid strike round_strike_price picks (a floor onto the grid) --
+    kept as a float when the grid is fractional (strike_difference 2.5 ->
+    162.5), int when whole; never int()-truncated. """
     spot_price = leg.get("spot_price", ctx["spot_price"])
-    return int(round_strike_price(spot_price=spot_price, multiple=ctx["symbols_dict"]["strike_difference"]))
+    strike = round_strike_price(spot_price=spot_price, multiple=ctx["symbols_dict"]["strike_difference"])
+    return int(strike) if strike == int(strike) else strike
 
 
 def _resolve_atm_option(ctx, leg):
     option_type = leg["instrument"]["option_type"]
     strike_price = _atm_strike(ctx, leg)
+    expiry = _expiry_date(ctx, "options")
     leg["option_type"] = option_type
     leg["strike_price"] = strike_price
-    leg["exit_symbol"] = (f"{ctx['underlying'].replace(' ', '_')}_{strike_price}_{option_type}"
-                          f"_{expiry_tag(ctx, 'options')}")
+    leg["exit_symbol"] = canonical_symbol("OPTION", ctx["underlying"], expiry=expiry,
+                                         strike=strike_price, option_type=option_type)
     leg["lot_size"] = leg.get("lot_size", int(str(ctx["symbols_dict"]["lot_size"])))
+    _set_data_key(ctx, leg)
 
 
 def _resolve_strike_offset_option(ctx, leg):
@@ -106,11 +132,13 @@ def _resolve_strike_offset_option(ctx, leg):
     else:  # itm
         strike_price = atm_strike - offset if option_type == "CE" else atm_strike + offset
 
+    expiry = _expiry_date(ctx, "options")
     leg["option_type"] = option_type
-    leg["strike_price"] = int(strike_price)
-    leg["exit_symbol"] = (f"{ctx['underlying'].replace(' ', '_')}_{int(strike_price)}_{option_type}"
-                          f"_{expiry_tag(ctx, 'options')}")
+    leg["strike_price"] = strike_price
+    leg["exit_symbol"] = canonical_symbol("OPTION", ctx["underlying"], expiry=expiry,
+                                         strike=strike_price, option_type=option_type)
     leg["lot_size"] = leg.get("lot_size", int(str(ctx["symbols_dict"]["lot_size"])))
+    _set_data_key(ctx, leg)
 
 
 def _resolve_atm_option_near_month(ctx, leg):
@@ -130,11 +158,13 @@ def _resolve_atm_option_near_month(ctx, leg):
 
     option_type = leg["instrument"]["option_type"]
     strike_price = _atm_strike(ctx, leg)
+    expiry = _expiry_date(ctx, "options", "near")
     leg["option_type"] = option_type
     leg["strike_price"] = strike_price
-    leg["exit_symbol"] = (f"{ctx['underlying'].replace(' ', '_')}_{strike_price}_{option_type}"
-                          f"_{expiry_tag(ctx, 'options', 'near')}")
+    leg["exit_symbol"] = canonical_symbol("OPTION", ctx["underlying"], expiry=expiry,
+                                         strike=strike_price, option_type=option_type)
     leg["lot_size"] = leg.get("lot_size", int(str(ctx["symbols_dict"]["lot_size"])))
+    _set_data_key(ctx, leg)
 
 
 INSTRUMENT_SELECTORS = {
