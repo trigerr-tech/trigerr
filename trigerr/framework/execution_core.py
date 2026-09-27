@@ -272,7 +272,7 @@ def _unwind_filled_legs(ctx, filled_legs):
         _alert(ctx, msg, "Leg Unwind")
 
 
-def _next_group_id(ctx, entry_date):
+def next_group_id(ctx, entry_date):
     """ One group_id per entry: {request_id}:{YYYY-MM-DD}:{n} (spec §8.1).
 
     The date keeps ids unique over a request's life: its orders list in Redis
@@ -303,7 +303,7 @@ def enter_legs(ctx, legs):
         resolved_leg["order_exchange"] = resolve_exchange_for_leg(ctx["exchange"], resolved_leg["instrument"]["selector"])
         resolved_legs.append(resolved_leg)
 
-    group_id = _next_group_id(ctx, _as_datetime(clock_rows[-1]["timestamp"]).date())
+    group_id = next_group_id(ctx, _as_datetime(clock_rows[-1]["timestamp"]).date())
     for leg in resolved_legs:
         leg["group_id"] = group_id
 

@@ -456,6 +456,23 @@ def test_convert_leg_orders_to_trade_skips_after_a_manual_exit(monkeypatch):
 # rebuild_legs_from_open_orders — defect #3 (restart collision)
 # ---------------------------------------------------------------------------
 
+def test_rebuild_legs_from_real_order_documents_keeps_data_key_group_id_leg_key():
+    """ The restart path is check_open_orders(orders_list) -> rebuild; a leg that
+    loses data_key there is never priced again, so it would never exit. """
+    from trigerr.orders.orders_utils import check_open_orders
+    ctx = _base_ctx(FakeState(), mode="vt")
+    orders_list = [{
+        "symbol": "NIFTY_23450_CE_2026-01-01", "trade_action": "ENTRY", "leg_key": "CE_short",
+        "data_key": "UPSTOX:XNSE:NIFTY_23450_CE_2026-01-01", "venue": "XNSE", "group_id": "r1:2026-01-01:1",
+        "option_type": "CE", "position_type": "SHORT", "quantity": 25, "quantity_left": 25,
+        "trigger_price": 50, "order_timestamp": "2026-01-01 09:20:00",
+    }]
+    ec.rebuild_legs_from_open_orders(ctx, check_open_orders(orders_list))
+    leg = ctx["legs"]["CE_short"]
+    assert leg["data_key"] == "UPSTOX:XNSE:NIFTY_23450_CE_2026-01-01"
+    assert leg["group_id"] == "r1:2026-01-01:1"
+
+
 def test_rebuild_legs_prefers_explicit_leg_key_over_option_type():
     ctx = _base_ctx(FakeState(), mode="vt")
     # two CE legs (e.g. a ratio spread) - option_type alone would collide

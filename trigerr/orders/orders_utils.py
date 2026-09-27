@@ -85,6 +85,9 @@ def check_open_orders(orders_list):
                 if order["trade_action"] == "ENTRY":
                     # Adding Must Have Fields
                     quantity_dict[trade_symbol]["underlying"] = order.get("underlying", "")
+                    # A resumed leg is priced and exited by these (spec sec 8.1)
+                    for field in ("data_key", "venue", "group_id", "leg_key"):
+                        quantity_dict[trade_symbol][field] = order.get(field)
                     quantity_dict[trade_symbol]["buy_quantity"] = order["quantity"]
                     quantity_dict[trade_symbol]["quantity"] = order["quantity"]
                     quantity_dict[trade_symbol]["quantity_left"] = order["quantity_left"]
