@@ -191,7 +191,7 @@ def place_entry_order_for_leg(ctx, leg):
             credential_id=ctx["credential_id"], validity=inputs.get("order_validity", "DAY"),
             asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
             option_type=leg.get("option_type"), strike_price=leg.get("strike_price"), underlying=ctx["underlying"],
-            max_qpo=ctx["symbols_dict"].get("max_qpo"))
+            max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
         if order_status != "success":
             _alert(ctx, f"Error placing entry order for {leg['leg_key']}: {lt_response}", "Live Order Error")
             return False
@@ -224,7 +224,8 @@ def place_entry_order_for_leg(ctx, leg):
             underlying=ctx["underlying"], validity=inputs.get("order_validity", "DAY"),
             asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
             max_qpo=ctx["symbols_dict"].get("max_qpo"), market=ctx["market"],
-            data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
+            data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"],
+            broker=lt_response.get("broker"), broker_symbol=lt_response.get("broker_symbol"))
         leg["entry_time"] = _as_datetime(live_response["timestamp"])
         leg["tradingsymbol"] = order_candle["symbol"]
         leg["db_order_id"] = orders_list[-1].get("db_order_id")
@@ -266,7 +267,7 @@ def _unwind_filled_legs(ctx, filled_legs):
                 asset_type=ctx["parameters"].get("asset_type", "OPTIONS"),
                 holding_type=ctx["parameters"].get("holding_type", "INTRADAY"),
                 option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
-                underlying=ctx["underlying"], max_qpo=ctx["symbols_dict"].get("max_qpo"))
+                underlying=ctx["underlying"], max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
             msg = (f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) after a sibling leg failed: "
                   f"{unwind_status} | {unwind_response}. Verify positions manually.")
         _alert(ctx, msg, "Leg Unwind")
@@ -461,7 +462,7 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             credential_id=ctx["credential_id"], validity=inputs.get("order_validity", "DAY"),
             asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
             option_type=leg.get("option_type"), strike_price=leg.get("strike_price"), underlying=ctx["underlying"],
-            max_qpo=ctx["symbols_dict"].get("max_qpo"))
+            max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
         if order_status != "success":
             _alert(ctx, f"Error placing exit order for {leg['leg_key']}: {lt_response}", "Live Order Error")
             return
@@ -485,7 +486,8 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             exchange_timestamp=live_response["timestamp"], order_id=lt_response["order_id"],
             broker_response=live_response, option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
             underlying=ctx["underlying"], data_key=leg["data_key"], venue=ctx["venue"],
-            group_id=leg.get("group_id"), leg_key=leg["leg_key"])
+            group_id=leg.get("group_id"), leg_key=leg["leg_key"],
+            broker=lt_response.get("broker"), broker_symbol=lt_response.get("broker_symbol"))
         ctx["orders_list"] = orders_list
 
     if all(l["quantity_left"] == 0 for l in ctx["legs"].values()):

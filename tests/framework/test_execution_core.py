@@ -87,7 +87,8 @@ def _patch_order_sinks(monkeypatch, state):
 
     def fake_place_lt_order(**kwargs):
         state.lt_calls.append(kwargs)
-        return "success", {"order_id": f"OID{len(state.lt_calls)}"}
+        return "success", {"order_id": f"OID{len(state.lt_calls)}",
+                           "broker": "zerodha", "broker_symbol": f"BROKERSYM{len(state.lt_calls)}"}
 
     def fake_poll_order_status(**kwargs):
         if state.poll_script:
@@ -97,7 +98,8 @@ def _patch_order_sinks(monkeypatch, state):
     def fake_save_lt_order(orders_list, symbol, quantity, quantity_left, params, **kwargs):
         order = {"symbol": symbol, "quantity": quantity, "quantity_left": quantity_left,
                  "data_key": kwargs.get("data_key"), "venue": kwargs.get("venue"),
-                 "group_id": kwargs.get("group_id"), "leg_key": kwargs.get("leg_key")}
+                 "group_id": kwargs.get("group_id"), "leg_key": kwargs.get("leg_key"),
+                 "broker": kwargs.get("broker"), "broker_symbol": kwargs.get("broker_symbol")}
         order.update(params or {})
         state.orders.append(order)
         return "success", list(state.orders)
@@ -237,6 +239,9 @@ def test_place_entry_order_for_leg_lt_success_polls_then_saves(monkeypatch):
     assert leg["entry_price"] == 100.0  # from the scripted poll response
     assert state.lt_calls[0]["symbol"] == "NIFTY_23450_PE_2026-08-27"
     assert state.lt_calls[0]["transaction_type"] == "BUY"
+    assert state.lt_calls[0]["venue"] == VENUE
+    assert state.orders[-1]["broker"] == "zerodha"
+    assert state.orders[-1]["broker_symbol"] == "BROKERSYM1"
 
 
 def test_place_entry_order_for_leg_lt_alerts_on_placement_failure(monkeypatch):
@@ -321,6 +326,25 @@ def test_enter_legs_partial_fill_unwinds_and_aborts(monkeypatch):
     assert len(manual_exits) == 1
     assert any("Partial Leg Entry" in a["title"] for a in state.alerts)
     assert any("Leg Unwind" in a["title"] for a in state.alerts)
+
+
+def test_enter_legs_partial_fill_unwind_lt_sends_venue(monkeypatch):
+    """ The unwind path's own place_lt_order call (no save_lt_order — it only
+    alerts) must still carry venue like every other lt order placement. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    ctx["feeds"]["spot"] = [SPOT_CANDLE]
+    state.ticks[_dk("NIFTY_23450_CE_2026-08-27")] = _tick(50, symbol="NIFTY_23450_CE_2026-08-27")
+    state.recent_candles[_dk("NIFTY_23450_CE_2026-08-27")] = _candle(50, symbol="NIFTY_23450_CE_2026-08-27")
+    # PE has no live tick -> its entry fails, triggering the unwind of CE
+
+    legs = [{"leg_key": "CE", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "CE"}},
+            {"leg_key": "PE", "side": "SELL", "instrument": {"selector": "atm_option", "option_type": "PE"}}]
+    assert ec.enter_legs(ctx, legs) == "abort"
+    unwind_calls = [c for c in state.lt_calls if c["transaction_type"] == "BUY"]
+    assert len(unwind_calls) == 1, f"expected exactly one unwind call, got {state.lt_calls}"
+    assert unwind_calls[0]["venue"] == VENUE
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +465,19 @@ def test_place_exit_order_for_leg_skips_an_already_placed_exit_level(monkeypatch
     ctx["orders_list"] = [{"symbol": "SYM_PE", "exit_type": "T1"}]
     ec.place_exit_order_for_leg(ctx, leg, "T1", _candle(101))
     assert leg["quantity_left"] == 10  # unchanged - check_existing_order short-circuited
+
+
+def test_place_exit_order_for_leg_lt_sends_venue_and_records_broker_fields(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    leg = _entered_leg("PE")
+    ctx["legs"] = {"PE": leg}
+
+    ec.place_exit_order_for_leg(ctx, leg, "T1", _candle(101))
+    assert state.lt_calls[-1]["venue"] == VENUE
+    assert state.orders[-1]["broker"] == "zerodha"
+    assert state.orders[-1]["broker_symbol"] == "BROKERSYM1"
 
 
 def test_convert_leg_orders_to_trade_skips_after_a_manual_exit(monkeypatch):

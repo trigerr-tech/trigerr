@@ -12,7 +12,8 @@ orders_url = config.get("orders_url")
 
 def place_lt_order(symbol, exchange="NSE", quantity=1, transaction_type="BUY", order_type="MARKET", lot_size=1,
                    credential_id=None, trigger_price=None, order_price=None, validity="DAY", asset_type="EQUITY",
-                   holding_type="DELIVERY", option_type=None, strike_price=None, underlying=None, expiry_date=None, max_qpo=None):
+                   holding_type="DELIVERY", option_type=None, strike_price=None, underlying=None, expiry_date=None, max_qpo=None,
+                   venue=None):
     """ Function to Place Live Trading Order """
     try:
         order_data_params = {"symbol": symbol,
@@ -32,6 +33,8 @@ def place_lt_order(symbol, exchange="NSE", quantity=1, transaction_type="BUY", o
                              "lot_size": lot_size,
                              "max_qpo": max_qpo
                              }
+        if venue is not None:
+            order_data_params["venue"] = venue
 
         order_response = place_live_order(credential_id=credential_id, order_details=order_data_params)
 
