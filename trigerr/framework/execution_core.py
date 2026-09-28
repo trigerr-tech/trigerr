@@ -35,7 +35,7 @@ import datetime
 from trigerr.orders.virtual import place_vt_order, save_vt_trade
 from trigerr.orders.live import place_lt_order, save_lt_order, poll_order_status, save_lt_trade
 from trigerr.orders.orders_utils import (fetch_orders_list, convert_to_trades, check_existing_order, sequence,
-                                         check_open_orders, acquire_exit_mutex, release_exit_mutex)
+                                         check_open_orders, acquire_exit_mutex, release_exit_mutex, renew_exit_mutex)
 from trigerr.data.market import ltp, last_candle
 from trigerr.utils import fetch_available_funds, calculate_funds, calculate_exit_quantity
 
@@ -242,36 +242,85 @@ def _unwind_filled_legs(ctx, filled_legs):
     in the same multi-leg entry failed, instead of leaving a naked position
     (ports strat_strdl_eios.py:727). Exits are sequenced BUY-before-SELL
     (spec §8.2), same as any other multi-leg exit pass, so a SHORT leg
-    (exit = BUY) closes before a LONG leg (exit = SELL). """
-    exit_orders = [{"transaction_type": "SELL" if leg["position_type"] == "LONG" else "BUY", "leg": leg}
-                  for leg in filled_legs]
-    for exit_order in sequence(exit_orders):
-        leg = exit_order["leg"]
-        exit_transaction = exit_order["transaction_type"]
-        if ctx["mode"] == "vt":
-            place_vt_order(
-                app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"],
-                order_candle={"symbol": leg["tradingsymbol"], "timestamp": datetime.datetime.now(),
-                             "close": leg["entry_price"]},
-                quantity=leg["quantity_left"], quantity_left=0, position_type=leg["position_type"],
-                transaction_type=exit_transaction, order_type="MARKET", exit_type="MANUAL",
-                trade_action="EXIT", lot_size=leg["lot_size"], user_id=ctx["user_id"],
-                strategy_id=ctx["strategy_id"], request_id=ctx["request_id"], market=ctx["market"],
-                market_type=ctx["market_type"], exchange=leg["order_exchange"], params=leg.get("order_params"),
-                data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
-            msg = f"Unwound {leg['leg_key']} (vt, MANUAL) after a sibling leg failed to enter."
-        else:
-            unwind_status, unwind_response = place_lt_order(
-                symbol=leg["tradingsymbol"], exchange=leg["order_exchange"], quantity=leg["quantity_left"],
-                transaction_type=exit_transaction, order_type="MARKET", lot_size=leg["lot_size"],
-                credential_id=ctx["credential_id"], validity=ctx["parameters"].get("order_validity", "DAY"),
-                asset_type=ctx["parameters"].get("asset_type", "OPTIONS"),
-                holding_type=ctx["parameters"].get("holding_type", "INTRADAY"),
-                option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
-                underlying=ctx["underlying"], max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
-            msg = (f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) after a sibling leg failed: "
-                  f"{unwind_status} | {unwind_response}. Verify positions manually.")
-        _alert(ctx, msg, "Leg Unwind")
+    (exit = BUY) closes before a LONG leg (exit = SELL).
+
+    Runs under the exit mutex (spec §8.3) like every other exit placement -
+    a manual exit racing this one must never double-exit the same leg. If the
+    mutex can't be acquired in time, this alerts and leaves the still-open
+    legs alone; the next monitor pass (this run's, or the next dispatch's
+    restart-from-open-orders) picks them up. """
+    token = acquire_exit_mutex(ctx["state_cursor"], ctx["request_id"])
+    if token is None:
+        _alert(ctx, f"Exit mutex held; could not unwind {[l['leg_key'] for l in filled_legs]} "
+                    f"after a sibling leg failed to enter - leaving for the monitor to handle.", "Leg Unwind")
+        return
+    ctx["exit_mutex_token"] = token
+    try:
+        exit_orders = [{"transaction_type": "SELL" if leg["position_type"] == "LONG" else "BUY", "leg": leg}
+                      for leg in filled_legs]
+        for exit_order in sequence(exit_orders):
+            leg = exit_order["leg"]
+            exit_transaction = exit_order["transaction_type"]
+            if ctx["mode"] == "vt":
+                tick = ltp(ctx["rdb_cursor"], leg["data_key"])
+                if tick:
+                    price, price_note = tick["last_price"], ""
+                else:
+                    price, price_note = leg["entry_price"], " (no live price available - priced at entry, zero P&L)"
+                place_vt_order(
+                    app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"],
+                    order_candle={"symbol": leg["tradingsymbol"], "timestamp": datetime.datetime.now(),
+                                 "close": price},
+                    quantity=leg["quantity_left"], quantity_left=0, position_type=leg["position_type"],
+                    transaction_type=exit_transaction, order_type="MARKET", exit_type="MANUAL",
+                    trade_action="EXIT", lot_size=leg["lot_size"], user_id=ctx["user_id"],
+                    strategy_id=ctx["strategy_id"], request_id=ctx["request_id"], market=ctx["market"],
+                    market_type=ctx["market_type"], exchange=leg["order_exchange"], params=leg.get("order_params"),
+                    data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
+                msg = f"Unwound {leg['leg_key']} (vt, MANUAL) after a sibling leg failed to enter.{price_note}"
+            else:
+                unwind_status, unwind_response = place_lt_order(
+                    symbol=leg["tradingsymbol"], exchange=leg["order_exchange"], quantity=leg["quantity_left"],
+                    transaction_type=exit_transaction, order_type="MARKET", lot_size=leg["lot_size"],
+                    credential_id=ctx["credential_id"], validity=ctx["parameters"].get("order_validity", "DAY"),
+                    asset_type=ctx["parameters"].get("asset_type", "OPTIONS"),
+                    holding_type=ctx["parameters"].get("holding_type", "INTRADAY"),
+                    option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
+                    underlying=ctx["underlying"], max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
+                if unwind_status != "success":
+                    msg = (f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) after a sibling leg failed: "
+                          f"{unwind_status} | {unwind_response}. Verify positions manually.")
+                else:
+                    polling_status, live_response = poll_order_status(
+                        credential_id=str(ctx["credential_id"]), order_id=unwind_response["order_id"],
+                        exchange=leg["order_exchange"], request_id=ctx["request_id"], user_id=ctx["user_id"],
+                        strategy_id=ctx["strategy_id"],
+                        on_wait=lambda: renew_exit_mutex(ctx["state_cursor"], ctx["request_id"], token))
+                    if polling_status != "success":
+                        msg = (f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) after a sibling leg failed: "
+                              f"order placed but polling failed: {polling_status} | {live_response}. "
+                              f"Verify positions manually.")
+                    else:
+                        _, orders_list = save_lt_order(
+                            app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"],
+                            orders_list=ctx.get("orders_list", []), symbol=leg["tradingsymbol"],
+                            quantity=leg["quantity_left"], quantity_left=0, position_type=leg["position_type"],
+                            transaction_type=exit_transaction, order_type="MARKET", exit_type="MANUAL",
+                            params=leg.get("order_params"), market_type=ctx["market_type"], trade_action="EXIT",
+                            trigger_price=live_response["average_price"], lot_size=leg["lot_size"],
+                            user_id=ctx["user_id"], strategy_id=ctx["strategy_id"], request_id=ctx["request_id"],
+                            exchange=leg["order_exchange"], exchange_timestamp=live_response["timestamp"],
+                            order_id=unwind_response["order_id"], broker_response=live_response,
+                            option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
+                            underlying=ctx["underlying"], data_key=leg["data_key"], venue=ctx["venue"],
+                            group_id=leg.get("group_id"), leg_key=leg["leg_key"],
+                            broker=unwind_response.get("broker"), broker_symbol=unwind_response.get("broker_symbol"))
+                        ctx["orders_list"] = orders_list
+                        msg = f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) (lt, MANUAL) after a sibling leg failed to enter."
+            _alert(ctx, msg, "Leg Unwind")
+    finally:
+        release_exit_mutex(ctx["state_cursor"], ctx["request_id"], token)
+        ctx["exit_mutex_token"] = None
 
 
 def next_group_id(ctx, entry_date):
@@ -474,10 +523,13 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             _alert(ctx, f"Error placing exit order for {leg['leg_key']}: {lt_response}", "Live Order Error")
             return
 
+        exit_mutex_token = ctx.get("exit_mutex_token")
         polling_status, live_response = poll_order_status(
             credential_id=str(ctx["credential_id"]), order_id=lt_response["order_id"],
             exchange=leg["order_exchange"], request_id=ctx["request_id"], user_id=ctx["user_id"],
-            strategy_id=ctx["strategy_id"])
+            strategy_id=ctx["strategy_id"],
+            on_wait=(lambda: renew_exit_mutex(ctx["state_cursor"], ctx["request_id"], exit_mutex_token))
+                    if exit_mutex_token else None)
         if polling_status != "success":
             _alert(ctx, f"Error polling exit order for {leg['leg_key']}: {live_response}", "Exit Polling Error")
             return
@@ -562,10 +614,13 @@ def manual_exit_legs(ctx, prices, leg_keys=None):
                 refused[leg_key] = f"order placement failed: {lt_response}"
                 continue
 
+            exit_mutex_token = ctx.get("exit_mutex_token")
             polling_status, live_response = poll_order_status(
                 credential_id=str(ctx["credential_id"]), order_id=lt_response["order_id"],
                 exchange=leg["order_exchange"], request_id=ctx["request_id"], user_id=ctx["user_id"],
-                strategy_id=ctx["strategy_id"])
+                strategy_id=ctx["strategy_id"],
+                on_wait=(lambda: renew_exit_mutex(ctx["state_cursor"], ctx["request_id"], exit_mutex_token))
+                        if exit_mutex_token else None)
             if polling_status != "success":
                 _alert(ctx, f"Error polling manual exit order for {leg_key}: {live_response}", "Manual Exit Polling Error")
                 refused[leg_key] = f"polling failed: {live_response}"
@@ -669,6 +724,7 @@ def monitor_open_position(ctx):
             if token is None:
                 ctx["logger"].warning("Exit mutex held elsewhere; skipping this candle's exits")
             else:
+                ctx["exit_mutex_token"] = token
                 try:
                     _reconcile_legs_with_state(ctx)  # forced - a manual exit may have landed since the cheap check above
                     exit_orders = [eo for eo in exit_orders if eo["leg"]["quantity_left"] > 0]
@@ -677,6 +733,7 @@ def monitor_open_position(ctx):
                         place_exit_order_for_leg(ctx, leg, exit_order["exit_type"], leg.get("candle", ctx.get("spot_candle")))
                 finally:
                     release_exit_mutex(ctx["state_cursor"], ctx["request_id"], token)
+                    ctx["exit_mutex_token"] = None
 
         after_exits = getattr(plugin, "after_exit_orders_placed", None)
         if after_exits:

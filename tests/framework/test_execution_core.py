@@ -35,6 +35,7 @@ class FakeState:
         self.recent_candles = {}
         self.investment_updates = []
         self.order_cursors = []
+        self.poll_calls = []
 
 
 class FakeStateCursor:
@@ -61,6 +62,10 @@ class FakeStateCursor:
 
     def delete(self, key):
         return self._kv.pop(key, None) is not None
+
+    def expire(self, key, seconds):
+        self.expired = getattr(self, "expired", []) + [(key, seconds)]
+        return key in self._kv
 
 
 def _base_ctx(state, mode="vt", legs=None):
@@ -116,6 +121,7 @@ def _patch_order_sinks(monkeypatch, state):
                            "broker": "zerodha", "broker_symbol": f"BROKERSYM{len(state.lt_calls)}"}
 
     def fake_poll_order_status(**kwargs):
+        state.poll_calls.append(kwargs)
         if state.poll_script:
             return state.poll_script.pop(0)
         return "success", {"average_price": 100.0, "timestamp": datetime.datetime(2026, 1, 1, 9, 20, 5)}
@@ -355,8 +361,8 @@ def test_enter_legs_partial_fill_unwinds_and_aborts(monkeypatch):
 
 
 def test_enter_legs_partial_fill_unwind_lt_sends_venue(monkeypatch):
-    """ The unwind path's own place_lt_order call (no save_lt_order — it only
-    alerts) must still carry venue like every other lt order placement. """
+    """ The unwind path's own place_lt_order call must still carry venue like
+    every other lt order placement. """
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
     ctx = _base_ctx(state, mode="lt")
@@ -948,3 +954,188 @@ def test_monitor_open_position_skips_exit_while_mutex_held_then_places_it_next_c
     assert len(release_calls) == 1               # only the successful acquire gets released
     exit_orders = [o for o in state.orders if o.get("trade_action") == "EXIT"]
     assert len(exit_orders) == 1                 # placed once, on the second candle
+
+
+# ---------------------------------------------------------------------------
+# S4: the multi-leg unwind records what it does, under the exit mutex
+# ---------------------------------------------------------------------------
+
+def _capture_vt_closes(monkeypatch, state):
+    closes = []
+    fake = ec.place_vt_order
+
+    def capturing(order_candle, **kwargs):
+        closes.append(order_candle["close"])
+        return fake(order_candle=order_candle, **kwargs)
+    monkeypatch.setattr(ec, "place_vt_order", capturing)
+    return closes
+
+
+def test_unwind_vt_prices_the_exit_at_ltp(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    closes = _capture_vt_closes(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    leg = _entered_leg("CE", entry_price=100, position_type="SHORT")
+    state.ticks[leg["data_key"]] = _tick(80, symbol=leg["tradingsymbol"])
+
+    ec._unwind_filled_legs(ctx, [leg])
+
+    assert closes == [80]
+    assert state.orders[-1]["exit_type"] == "MANUAL"
+    assert state.orders[-1]["transaction_type"] == "BUY"
+    assert ctx["state_cursor"].get("r1:exit_mutex") is None, "the mutex must be released"
+
+
+def test_unwind_vt_without_a_live_price_falls_back_to_entry_and_says_so(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    closes = _capture_vt_closes(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    leg = _entered_leg("CE", entry_price=100)
+
+    ec._unwind_filled_legs(ctx, [leg])
+
+    assert closes == [100]
+    assert "priced at entry" in state.alerts[-1]["msg"]
+
+
+def test_unwind_lt_polls_and_records_the_exit(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    leg = _entered_leg("CE", position_type="SHORT", group_id="r1:2026-01-01:1")
+
+    ec._unwind_filled_legs(ctx, [leg])
+
+    assert len(state.poll_calls) == 1 and state.poll_calls[0]["order_id"] == "OID1"
+    recorded = state.orders[-1]
+    assert recorded["exit_type"] == "MANUAL"
+    assert (recorded["data_key"], recorded["group_id"], recorded["leg_key"]) == (leg["data_key"], "r1:2026-01-01:1", "CE")
+    assert (recorded["venue"], recorded["broker"], recorded["broker_symbol"]) == (VENUE, "zerodha", "BROKERSYM1")
+    assert ctx["orders_list"] == state.orders
+
+
+def test_unwind_lt_failed_placement_alerts_and_records_nothing(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    monkeypatch.setattr(ec, "place_lt_order", lambda **k: ("error", {"message": "rejected"}))
+    ctx = _base_ctx(state, mode="lt")
+
+    ec._unwind_filled_legs(ctx, [_entered_leg("CE")])
+
+    assert state.orders == [] and state.poll_calls == []
+    assert "Verify positions manually" in state.alerts[-1]["msg"]
+
+
+def test_unwind_lt_failed_poll_alerts_and_records_nothing(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    state.poll_script = [("timeout", None)]
+    ctx = _base_ctx(state, mode="lt")
+
+    ec._unwind_filled_legs(ctx, [_entered_leg("CE")])
+
+    assert state.orders == []
+    assert "Verify positions manually" in state.alerts[-1]["msg"]
+
+
+def test_unwind_leaves_legs_alone_when_the_exit_mutex_is_held(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    monkeypatch.setattr(ec, "acquire_exit_mutex", lambda *a, **k: None)
+    ctx = _base_ctx(state, mode="lt")
+
+    ec._unwind_filled_legs(ctx, [_entered_leg("CE")])
+
+    assert state.lt_calls == [] and state.orders == []
+    assert "Exit mutex held" in state.alerts[-1]["msg"]
+
+
+# ---------------------------------------------------------------------------
+# S5: every exit poll made under the mutex renews it
+# ---------------------------------------------------------------------------
+
+def _renews_the_held_mutex(ctx, on_wait):
+    token = ctx["state_cursor"].get("r1:exit_mutex")
+    assert token is not None
+    ctx["state_cursor"].expired = []
+    on_wait()
+    return ctx["state_cursor"].expired == [("r1:exit_mutex", ec_ttl())]
+
+
+def ec_ttl():
+    from trigerr.orders.orders_utils import EXIT_MUTEX_TTL_S
+    return EXIT_MUTEX_TTL_S
+
+
+def test_unwind_lt_poll_renews_the_mutex(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    renewals = []
+    ctx = _base_ctx(state, mode="lt")
+
+    def poll_that_waits(**kwargs):
+        renewals.append(_renews_the_held_mutex(ctx, kwargs["on_wait"]))
+        return "success", {"average_price": 100.0, "timestamp": datetime.datetime(2026, 1, 1, 9, 20, 5)}
+    monkeypatch.setattr(ec, "poll_order_status", poll_that_waits)
+
+    ec._unwind_filled_legs(ctx, [_entered_leg("CE")])
+    assert renewals == [True]
+
+
+def test_exit_poll_renews_the_mutex_the_caller_holds(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    leg = _entered_leg("PE")
+    ctx["legs"] = {"PE": leg}
+    ctx["exit_mutex_token"] = ec.acquire_exit_mutex(ctx["state_cursor"], "r1")
+
+    ec.place_exit_order_for_leg(ctx, leg, "T1", _candle(101))
+    assert _renews_the_held_mutex(ctx, state.poll_calls[-1]["on_wait"])
+
+
+def test_exit_poll_without_a_held_mutex_does_not_renew(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    leg = _entered_leg("PE")
+    ctx["legs"] = {"PE": leg}
+
+    ec.place_exit_order_for_leg(ctx, leg, "T1", _candle(101))
+    assert state.poll_calls[-1]["on_wait"] is None
+
+
+def test_manual_exit_poll_renews_the_mutex_the_oms_holds(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    ctx["legs"] = {"PE": _entered_leg("PE")}
+    ctx["exit_mutex_token"] = ec.acquire_exit_mutex(ctx["state_cursor"], "r1")
+
+    ec.manual_exit_legs(ctx, {})
+    assert _renews_the_held_mutex(ctx, state.poll_calls[-1]["on_wait"])
+
+
+def test_monitor_exits_hand_their_mutex_token_to_the_exit_poll(monkeypatch):
+    """ monitor_open_position acquires the mutex, then places exits: the token
+    must reach place_exit_order_for_leg (via ctx) and be cleared afterwards. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    seen = []
+    monkeypatch.setattr(ec, "place_exit_order_for_leg",
+                        lambda ctx, leg, exit_type, candle: seen.append(ctx.get("exit_mutex_token")))
+    leg = _entered_leg("PE")
+    ctx["legs"] = {"PE": leg}
+    ctx["exit_rules"]["triggers"] = [{"condition": "target_hit", "exit_type": "T1"}]
+    state.orders = [_entry_order_for(leg)]
+    ctx["orders_list"] = list(state.orders)
+    exit_candle = _candle(105)
+    ctx["tick_source"] = iter([(datetime.datetime(2026, 1, 1, 9, 21), {"spot": [exit_candle]})])
+    state.recent_candles[_dk("SYM_PE")] = exit_candle
+
+    ec.monitor_open_position(ctx)
+    assert seen and seen[0] is not None
+    assert ctx["exit_mutex_token"] is None

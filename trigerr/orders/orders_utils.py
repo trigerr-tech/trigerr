@@ -339,6 +339,23 @@ def release_exit_mutex(redis_cursor, request_id, token):
         print(f"Exception in releasing exit mutex : {e}")
 
 
+def renew_exit_mutex(redis_cursor, request_id, token):
+    """ Re-EXPIREs the exit mutex to EXIT_MUTEX_TTL_S, only if it still holds
+    `token` (same GET-compare-then-act style as release_exit_mutex) -- keeps
+    the mutex alive while an exit order sits waiting on poll_order_status
+    (up to 1800s) past the mutex's own 120s TTL, without ever renewing a
+    mutex someone else has since acquired. """
+    key = f"{request_id}:exit_mutex"
+    try:
+        current = redis_cursor.get(key)
+        if isinstance(current, bytes):
+            current = current.decode()
+        if current == token:
+            redis_cursor.expire(key, EXIT_MUTEX_TTL_S)
+    except Exception as e:
+        print(f"Exception in renewing exit mutex : {e}")
+
+
 # def check_order_status(credential_id, order_id, exchange):
 #     """Function to fetch current order status"""
 #     try:

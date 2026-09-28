@@ -127,3 +127,59 @@ def test_validate_credential_never_sends_credential_values():
 
     sent_body = mock_post.call_args.kwargs["json"]
     assert set(sent_body.keys()) == {"credential_id"}
+
+
+# ---------------------------------------------------------------------------
+# S6: idempotency key -- one per call, reused only for transport retries
+# ---------------------------------------------------------------------------
+
+def test_place_live_order_sends_idempotency_key_at_top_level():
+    with patch("trigerr.orders.live.requests.post") as mock_post:
+        mock_post.return_value = _mock_response({"status": "SUCCESS"})
+        live.place_live_order(credential_id="cred-1", order_details={"symbol": "INFY"})
+
+    sent_body = mock_post.call_args.kwargs["json"]
+    assert sent_body["idempotency_key"]
+    assert "idempotency_key" not in sent_body["order_params"]
+
+
+def test_transport_retry_resends_the_same_key():
+    """ The OMS may have placed the order before the connection dropped: the
+    retry must carry the same key so the OMS replays instead of re-placing. """
+    with patch("trigerr.orders.live.requests.post") as mock_post, patch("trigerr.orders.live.time.sleep"):
+        mock_post.side_effect = [live.requests.ConnectionError("reset"),
+                                 _mock_response({"status": "SUCCESS", "order_id": "OID1"})]
+        response = live.place_live_order(credential_id="cred-1", order_details={"symbol": "INFY"})
+
+    assert response["order_id"] == "OID1"
+    keys = [c.kwargs["json"]["idempotency_key"] for c in mock_post.call_args_list]
+    assert len(keys) == 2 and keys[0] == keys[1]
+
+
+def test_each_call_gets_a_fresh_key():
+    """ The OMS keeps an ERROR result under its key for 24 h: a later retry of
+    a rejected order must not reuse the key, or it can never be placed. """
+    with patch("trigerr.orders.live.requests.post") as mock_post:
+        mock_post.return_value = _mock_response({"status": "ERROR"})
+        live.place_live_order(credential_id="cred-1", order_details={"symbol": "INFY"})
+        live.place_live_order(credential_id="cred-1", order_details={"symbol": "INFY"})
+
+    keys = [c.kwargs["json"]["idempotency_key"] for c in mock_post.call_args_list]
+    assert keys[0] != keys[1]
+
+
+def test_transport_retries_are_bounded_then_return_none():
+    with patch("trigerr.orders.live.requests.post") as mock_post, patch("trigerr.orders.live.time.sleep"):
+        mock_post.side_effect = live.requests.ConnectionError("down")
+        assert live.place_live_order(credential_id="cred-1", order_details={"symbol": "INFY"}) is None
+    assert mock_post.call_count == 3
+
+
+def test_poll_order_status_calls_on_wait_once_per_open_poll():
+    responses = [_mock_response({"status": "OPEN"}), _mock_response({"status": "OPEN"}),
+                 _mock_response({"status": "COMPLETED", "timestamp": "2026-09-28 10:00:00"})]
+    waits = []
+    with patch("trigerr.orders.live.requests.post", side_effect=responses), patch("trigerr.orders.live.time.sleep"):
+        status, _ = live.poll_order_status("cred-1", "OID1", "NFO", on_wait=lambda: waits.append(1))
+    assert status == "success"
+    assert len(waits) == 2

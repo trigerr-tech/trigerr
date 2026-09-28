@@ -7,13 +7,14 @@ from urllib.parse import urljoin
 import datetime
 import json
 import time
+import uuid
 orders_url = config.get("orders_url")
 
 
 def place_lt_order(symbol, exchange="NSE", quantity=1, transaction_type="BUY", order_type="MARKET", lot_size=1,
                    credential_id=None, trigger_price=None, order_price=None, validity="DAY", asset_type="EQUITY",
                    holding_type="DELIVERY", option_type=None, strike_price=None, underlying=None, expiry_date=None, max_qpo=None,
-                   venue=None):
+                   venue=None, idempotency_key=None):
     """ Function to Place Live Trading Order """
     try:
         order_data_params = {"symbol": symbol,
@@ -36,7 +37,8 @@ def place_lt_order(symbol, exchange="NSE", quantity=1, transaction_type="BUY", o
         if venue is not None:
             order_data_params["venue"] = venue
 
-        order_response = place_live_order(credential_id=credential_id, order_details=order_data_params)
+        order_response = place_live_order(credential_id=credential_id, order_details=order_data_params,
+                                          idempotency_key=idempotency_key)
 
         if order_response["status"] == "SUCCESS":
             return "success", order_response
@@ -184,16 +186,32 @@ def _add_correlation_fields(request_dict, request_id=None, user_id=None, strateg
     return request_dict
 
 
-def place_live_order(credential_id, order_details, request_id=None, user_id=None, strategy_id=None):
-    """Function to place live trade order via REST API"""
+def place_live_order(credential_id, order_details, request_id=None, user_id=None, strategy_id=None,
+                     idempotency_key=None, transport_retries=2, retry_sleep=2):
+    """Function to place live trade order via REST API.
+
+    One idempotency key per call (a fresh one unless the caller passes its
+    own), resent unchanged only when the HTTP call itself fails: if the OMS
+    placed the order but the response was lost, the retry gets the original
+    result back instead of a second order. A new call always gets a new key --
+    the OMS keeps an ERROR result under its key for 24h, so reusing a key
+    across calls would block every later retry of a rejected order. """
     try:
         print("Placing Live Trade Order")
-        request_dict = _add_correlation_fields(
-            {"credential_id": str(credential_id), "order_params": order_details},
-            request_id, user_id, strategy_id)
+        request_dict = {"credential_id": str(credential_id), "order_params": order_details,
+                        "idempotency_key": idempotency_key or uuid.uuid4().hex}
+        request_dict = _add_correlation_fields(request_dict, request_id, user_id, strategy_id)
         print(f"request_dict : {request_dict}")
 
-        response = requests.post(url=urljoin(orders_url, "place_order"), json=request_dict, headers=get_auth_headers())
+        for attempt in range(transport_retries + 1):
+            try:
+                response = requests.post(url=urljoin(orders_url, "place_order"), json=request_dict, headers=get_auth_headers())
+                break
+            except requests.RequestException as e:
+                if attempt == transport_retries:
+                    raise
+                print(f"place_order transport error, retrying with the same idempotency key : {e}")
+                time.sleep(retry_sleep)
         print("******** Order Placement Response *********")
         print(response.json())
         return response.json()
@@ -251,8 +269,13 @@ def check_order_status(credential_id, order_id, exchange, request_id=None, user_
 
 
 def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, sleep_interval=1,
-                       request_id=None, user_id=None, strategy_id=None):
-    """ Function to poll order status until terminal state is reached """
+                       request_id=None, user_id=None, strategy_id=None, on_wait=None):
+    """ Function to poll order status until terminal state is reached.
+
+    on_wait, if given, is called once per polling iteration that keeps
+    waiting (status still OPEN) - lets a caller holding the exit mutex
+    (EXIT_MUTEX_TTL_S=120s, far shorter than max_wait_seconds=1800s) renew it
+    so it doesn't expire out from under a still-unfilled exit order. """
     order_response = None
     try:
         print(f"Polling Order Status for order_id: {order_id}")
@@ -292,6 +315,8 @@ def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, 
 
             elif current_status == "OPEN":
                 # Still pending - continue polling
+                if on_wait:
+                    on_wait()
                 retry_count += 1
                 time.sleep(sleep_interval)
                 continue
