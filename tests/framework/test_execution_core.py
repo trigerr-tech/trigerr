@@ -37,7 +37,30 @@ class FakeState:
         self.order_cursors = []
 
 
-STATE_CURSOR = object()
+class FakeStateCursor:
+    """ Just enough of the state Redis for reconciliation and the exit mutex:
+    llen() over the same list fetch_orders_list()/place_vt_order() are stubbed
+    to read/write (state.orders), plus a tiny in-memory SET NX EX / GET /
+    DELETE for acquire_exit_mutex/release_exit_mutex. """
+
+    def __init__(self, state):
+        self._state = state
+        self._kv = {}
+
+    def llen(self, key):
+        return len(self._state.orders)
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self._kv:
+            return None
+        self._kv[key] = value
+        return True
+
+    def get(self, key):
+        return self._kv.get(key)
+
+    def delete(self, key):
+        return self._kv.pop(key, None) is not None
 
 
 def _base_ctx(state, mode="vt", legs=None):
@@ -49,8 +72,9 @@ def _base_ctx(state, mode="vt", legs=None):
         # collector publishes, so a leg cannot be built without one.
         "rdb_cursor": _ExpiryMap(),
         # Orders and request status live in the tenant's state Redis, apart
-        # from market data; a plain sentinel, since the order sinks are stubbed.
-        "state_cursor": STATE_CURSOR,
+        # from market data; a fake keyed off the same FakeState the order
+        # sinks below write to.
+        "state_cursor": FakeStateCursor(state),
         "user_id": "u1", "strategy_id": "s1", "request_id": "r1", "credential_id": "c1",
         "symbol": "NIFTY", "underlying": "NIFTY", "market": "IN", "exchange": "XNSE",
         "venue": VENUE, "data_vendor": DATA_VENDOR,
@@ -78,6 +102,7 @@ def _patch_order_sinks(monkeypatch, state):
                  "quantity_left": quantity_left, "position_type": position_type,
                  "transaction_type": transaction_type, "exit_type": exit_type, "trade_action": trade_action,
                  "order_timestamp": datetime.datetime(2026, 1, 1, 9, 20),
+                 "trigger_price": kwargs.get("trigger_price"),
                  "data_key": kwargs.get("data_key"), "venue": kwargs.get("venue"),
                  "group_id": kwargs.get("group_id"), "leg_key": kwargs.get("leg_key")}
         order.update(kwargs.get("params") or {})
@@ -97,6 +122,7 @@ def _patch_order_sinks(monkeypatch, state):
 
     def fake_save_lt_order(orders_list, symbol, quantity, quantity_left, params, **kwargs):
         order = {"symbol": symbol, "quantity": quantity, "quantity_left": quantity_left,
+                 "exit_type": kwargs.get("exit_type"), "trigger_price": kwargs.get("trigger_price"),
                  "data_key": kwargs.get("data_key"), "venue": kwargs.get("venue"),
                  "group_id": kwargs.get("group_id"), "leg_key": kwargs.get("leg_key"),
                  "broker": kwargs.get("broker"), "broker_symbol": kwargs.get("broker_symbol")}
@@ -199,7 +225,7 @@ def test_vt_entry_order_goes_to_the_state_cursor_not_the_market_data_one(monkeyp
            "lot_size": 25, "position_type": "LONG", "transaction_type": "BUY", "order_exchange": "NFO"}
 
     assert ec.place_entry_order_for_leg(ctx, leg) is True
-    assert state.order_cursors == [STATE_CURSOR]
+    assert state.order_cursors == [ctx["state_cursor"]]
 
 
 def test_place_entry_order_for_leg_vt_fails_without_live_candle(monkeypatch):
@@ -420,6 +446,18 @@ def _entered_leg(leg_key, entry_price=100, quantity=10, position_type="LONG", gr
            "order_params": {"leg_key": leg_key, "entry_price": entry_price}}
 
 
+def _entry_order_for(leg):
+    """ The ENTRY order document that would already be sitting in the state
+    Redis for an _entered_leg() — monitor_open_position's reconciliation now
+    reads real orders (check_open_orders), so a test exiting a hand-built leg
+    must seed the entry order it implies. """
+    return {"symbol": leg["tradingsymbol"], "trade_action": "ENTRY", "exit_type": None,
+           "quantity": leg["quantity"], "quantity_left": leg["quantity_left"],
+           "trigger_price": leg["entry_price"], "position_type": leg["position_type"],
+           "order_timestamp": leg["entry_time"], "leg_key": leg["leg_key"],
+           "data_key": leg["data_key"], "venue": VENUE, "group_id": leg["group_id"]}
+
+
 def test_place_exit_order_for_leg_does_not_convert_to_trade_until_all_legs_flat(monkeypatch):
     state = FakeState()
     _patch_order_sinks(monkeypatch, state)
@@ -489,6 +527,131 @@ def test_convert_leg_orders_to_trade_skips_after_a_manual_exit(monkeypatch):
     assert state.saved_vt_trades == []
 
 
+def test_convert_leg_orders_to_trade_record_manual_records_anyway(monkeypatch):
+    """ manual_exit_legs' own call: MANUAL is the exit IT just placed, not one
+    discovered after the fact - it must record, unlike the default (used by a
+    strategy noticing its position was closed manually by someone else). """
+    state = FakeState()
+    state.orders = [{"trade_action": "EXIT", "exit_type": "MANUAL"}]
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ec.convert_leg_orders_to_trade(ctx, record_manual=True)
+    assert len(state.saved_vt_trades) == 1
+
+
+# ---------------------------------------------------------------------------
+# manual_exit_legs — spec §8.3 (manual exits)
+# ---------------------------------------------------------------------------
+
+def test_manual_exit_legs_vt_uses_given_prices_and_records_trade_once_flat(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ctx["legs"] = {"CE": _entered_leg("CE", entry_price=50), "PE": _entered_leg("PE", entry_price=45)}
+
+    result = ec.manual_exit_legs(ctx, {"CE": 55, "PE": 40})
+
+    assert set(result["exited"]) == {"CE", "PE"}
+    assert result["refused"] == {}
+    assert ctx["legs"]["CE"]["quantity_left"] == 0
+    assert ctx["legs"]["PE"]["quantity_left"] == 0
+    ce_order = next(o for o in state.orders if o["leg_key"] == "CE")
+    assert ce_order["trigger_price"] == 55
+    assert ce_order["exit_type"] == "MANUAL"
+    # one saved trade per leg (matching convert_leg_orders_to_trade's own convention)
+    assert len(state.saved_vt_trades) == 2
+
+
+def test_manual_exit_legs_vt_missing_price_is_refused_not_invented(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ctx["legs"] = {"CE": _entered_leg("CE"), "PE": _entered_leg("PE")}
+
+    result = ec.manual_exit_legs(ctx, {"CE": 55})  # no price for PE
+
+    assert result["exited"] == ["CE"]
+    assert result["refused"] == {"PE": "no price"}
+    assert ctx["legs"]["PE"]["quantity_left"] == 10  # untouched
+    assert state.saved_vt_trades == []  # PE still open - nothing recorded yet
+
+
+def test_manual_exit_legs_sequences_buy_before_sell_on_a_4_leg_position(monkeypatch):
+    """ Iron-fly-style short premium position: 2 SHORT legs (exit=BUY) and 2
+    LONG wings (exit=SELL) - manual_exit_legs must still buy back the shorts
+    before selling the wings (spec §8.2), no unhedged moment. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ctx["legs"] = {
+        "wing_ce": _entered_leg("wing_ce", position_type="LONG"),
+        "wing_pe": _entered_leg("wing_pe", position_type="LONG"),
+        "short_ce": _entered_leg("short_ce", position_type="SHORT"),
+        "short_pe": _entered_leg("short_pe", position_type="SHORT"),
+    }
+    prices = {k: 10 for k in ctx["legs"]}
+
+    result = ec.manual_exit_legs(ctx, prices)
+
+    assert set(result["exited"]) == set(ctx["legs"])
+    assert [o["transaction_type"] for o in state.orders] == ["BUY", "BUY", "SELL", "SELL"]
+
+
+def test_manual_exit_legs_leg_keys_filters_to_named_legs_only(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ctx["legs"] = {"CE": _entered_leg("CE"), "PE": _entered_leg("PE")}
+
+    result = ec.manual_exit_legs(ctx, {"CE": 55}, leg_keys=["CE"])
+
+    assert result["exited"] == ["CE"]
+    assert ctx["legs"]["PE"]["quantity_left"] == 10  # never touched
+    assert state.saved_vt_trades == []  # not every leg flat
+
+
+def test_manual_exit_legs_unknown_leg_key_is_refused(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    ctx["legs"] = {"CE": _entered_leg("CE")}
+
+    result = ec.manual_exit_legs(ctx, {"CE": 55}, leg_keys=["CE", "NOPE"])
+
+    assert result["exited"] == ["CE"]
+    assert result["refused"] == {"NOPE": "unknown leg_key"}
+
+
+def test_manual_exit_legs_lt_sends_venue_and_records_broker_fields(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="lt")
+    ctx["legs"] = {"PE": _entered_leg("PE")}
+
+    result = ec.manual_exit_legs(ctx, {})
+
+    assert result["exited"] == ["PE"]
+    assert state.lt_calls[-1]["venue"] == VENUE
+    assert state.orders[-1]["exit_type"] == "MANUAL"
+    assert state.orders[-1]["broker"] == "zerodha"
+    assert state.orders[-1]["broker_symbol"] == "BROKERSYM1"
+
+
+def test_manual_exit_legs_lt_placement_failure_is_refused(monkeypatch):
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    monkeypatch.setattr(ec, "place_lt_order", lambda **k: ("error", {"message": "rejected"}))
+    ctx = _base_ctx(state, mode="lt")
+    ctx["legs"] = {"PE": _entered_leg("PE")}
+
+    result = ec.manual_exit_legs(ctx, {})
+
+    assert result["exited"] == []
+    assert "PE" in result["refused"]
+    assert ctx["legs"]["PE"]["quantity_left"] == 10  # never zeroed on a failed placement
+    assert state.saved_lt_trades == []
+
+
 # ---------------------------------------------------------------------------
 # rebuild_legs_from_open_orders — defect #3 (restart collision)
 # ---------------------------------------------------------------------------
@@ -502,10 +665,11 @@ def test_rebuild_legs_from_real_order_documents_keeps_data_key_group_id_leg_key(
         "symbol": "NIFTY_23450_CE_2026-01-01", "trade_action": "ENTRY", "leg_key": "CE_short",
         "data_key": "UPSTOX:XNSE:NIFTY_23450_CE_2026-01-01", "venue": "XNSE", "group_id": "r1:2026-01-01:1",
         "option_type": "CE", "position_type": "SHORT", "quantity": 25, "quantity_left": 25,
-        "trigger_price": 50, "order_timestamp": "2026-01-01 09:20:00",
+        "trigger_price": 50, "order_timestamp": "2026-01-01 09:20:00", "lot_size": 75,
     }]
     ec.rebuild_legs_from_open_orders(ctx, check_open_orders(orders_list))
     leg = ctx["legs"]["CE_short"]
+    assert leg["lot_size"] == 75  # live order quantity = quantity * lot_size
     assert leg["data_key"] == "UPSTOX:XNSE:NIFTY_23450_CE_2026-01-01"
     assert leg["group_id"] == "r1:2026-01-01:1"
 
@@ -668,6 +832,8 @@ def test_monitor_open_position_exits_and_stops_when_all_legs_flat(monkeypatch):
     leg = _entered_leg("PE")
     ctx["legs"] = {"PE": leg}
     ctx["exit_rules"]["triggers"] = [{"condition": "target_hit", "exit_type": "T1"}]
+    state.orders = [_entry_order_for(leg)]
+    ctx["orders_list"] = list(state.orders)
 
     exit_candle = _candle(105)
     ctx["tick_source"] = iter([(datetime.datetime(2026, 1, 1, 9, 21), {"spot": [exit_candle]})])
@@ -698,6 +864,8 @@ def test_monitor_open_position_sequences_multi_leg_exits_buy_before_sell(monkeyp
     ctx["plugin"] = types.SimpleNamespace(
         check_exit_condition=lambda c: {"wing_ce": "MARKETEXIT", "wing_pe": "MARKETEXIT",
                                         "short_ce": "MARKETEXIT", "short_pe": "MARKETEXIT"})
+    state.orders = [_entry_order_for(leg) for leg in legs.values()]
+    ctx["orders_list"] = list(state.orders)
 
     exit_candle = _candle(105)
     ctx["tick_source"] = iter([(datetime.datetime(2026, 1, 1, 9, 21), {"spot": [exit_candle]})])
@@ -706,5 +874,77 @@ def test_monitor_open_position_sequences_multi_leg_exits_buy_before_sell(monkeyp
 
     ec.monitor_open_position(ctx)
 
-    assert [o["transaction_type"] for o in state.orders] == ["BUY", "BUY", "SELL", "SELL"]
+    exit_orders = [o for o in state.orders if o.get("trade_action") == "EXIT"]
+    assert [o["transaction_type"] for o in exit_orders] == ["BUY", "BUY", "SELL", "SELL"]
     assert all(leg["quantity_left"] == 0 for leg in legs.values())
+
+
+# ---------------------------------------------------------------------------
+# monitor_open_position — spec §8.3 reconciliation (manual exits while a
+# strategy is running)
+# ---------------------------------------------------------------------------
+
+def test_monitor_open_position_drops_leg_closed_externally_and_returns_without_recording(monkeypatch):
+    """ Someone else (a manual exit) closed this leg between candles - the
+    orders list grew (LLEN moved), so the cheap per-candle check must notice,
+    zero the leg out, and return WITHOUT booking a trade (whoever closed it
+    already recorded it) or placing anything new. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    leg = _entered_leg("PE")
+    ctx["legs"] = {"PE": leg}
+    entry_order = _entry_order_for(leg)
+    manual_exit_order = dict(entry_order, trade_action="EXIT", exit_type="MANUAL", quantity_left=0)
+    ctx["orders_list"] = [entry_order]                    # this process's stale view
+    state.orders = [entry_order, manual_exit_order]        # the real, current state
+    ctx["exit_rules"]["triggers"] = [{"condition": "target_hit", "exit_type": "T1"}]
+
+    exit_candle = _candle(105)
+    ctx["tick_source"] = iter([(datetime.datetime(2026, 1, 1, 9, 21), {"spot": [exit_candle]})])
+    state.recent_candles[_dk("SYM_PE")] = exit_candle
+
+    ec.monitor_open_position(ctx)
+
+    assert leg["quantity_left"] == 0
+    assert state.saved_vt_trades == []           # not recorded here
+    assert len(state.orders) == 2                # nothing new placed
+
+
+def test_monitor_open_position_skips_exit_while_mutex_held_then_places_it_next_candle(monkeypatch):
+    """ A held exit mutex (the OMS mid manual-exit, or another instance) must
+    not be raced - this candle's exit is skipped (logged), and placed on the
+    next candle once the mutex is free. """
+    state = FakeState()
+    _patch_order_sinks(monkeypatch, state)
+    ctx = _base_ctx(state, mode="vt")
+    leg = _entered_leg("PE")
+    ctx["legs"] = {"PE": leg}
+    state.orders = [_entry_order_for(leg)]
+    ctx["orders_list"] = list(state.orders)
+    ctx["plugin"] = types.SimpleNamespace(check_exit_condition=lambda c: {"PE": "T1"})
+
+    acquire_calls = {"n": 0}
+
+    def fake_acquire(redis_cursor, request_id, wait_s=10):
+        acquire_calls["n"] += 1
+        return None if acquire_calls["n"] == 1 else "tok"
+
+    release_calls = []
+    monkeypatch.setattr(ec, "acquire_exit_mutex", fake_acquire)
+    monkeypatch.setattr(ec, "release_exit_mutex", lambda *a, **k: release_calls.append(a))
+
+    exit_candle = _candle(105)
+    ctx["tick_source"] = iter([
+        (datetime.datetime(2026, 1, 1, 9, 21), {"spot": [exit_candle]}),
+        (datetime.datetime(2026, 1, 1, 9, 22), {"spot": [exit_candle]}),
+    ])
+    state.recent_candles[_dk("SYM_PE")] = exit_candle
+
+    ec.monitor_open_position(ctx)
+
+    assert leg["quantity_left"] == 0
+    assert acquire_calls["n"] == 2               # held on candle 1, free on candle 2
+    assert len(release_calls) == 1               # only the successful acquire gets released
+    exit_orders = [o for o in state.orders if o.get("trade_action") == "EXIT"]
+    assert len(exit_orders) == 1                 # placed once, on the second candle

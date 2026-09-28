@@ -34,7 +34,8 @@ import datetime
 
 from trigerr.orders.virtual import place_vt_order, save_vt_trade
 from trigerr.orders.live import place_lt_order, save_lt_order, poll_order_status, save_lt_trade
-from trigerr.orders.orders_utils import fetch_orders_list, convert_to_trades, check_existing_order, sequence
+from trigerr.orders.orders_utils import (fetch_orders_list, convert_to_trades, check_existing_order, sequence,
+                                         check_open_orders, acquire_exit_mutex, release_exit_mutex)
 from trigerr.data.market import ltp, last_candle
 from trigerr.utils import fetch_available_funds, calculate_funds, calculate_exit_quantity
 
@@ -404,16 +405,22 @@ def _combined_pnls(leg_trades):
     return gross, net
 
 
-def convert_leg_orders_to_trade(ctx):
+def convert_leg_orders_to_trade(ctx, record_manual=False):
     """ Fires once, when EVERY leg is flat — not per leg (defect #3: the
     original _finish_leg_trade fired the moment the FIRST leg of a straddle
     closed, booking a mixed trade while the other leg was still open). Saves
     one trade record per leg (matching legacy's convert_straddle_trades),
-    each stamped with the position's combined net pnl across every leg. """
+    each stamped with the position's combined net pnl across every leg.
+
+    A MANUAL exit_type is skipped by default: the old kill endpoints (and now
+    manual_exit_legs) record the trade themselves, so a strategy noticing its
+    position closed manually must not double-record it. record_manual=True
+    (manual_exit_legs' own call) records anyway — there, MANUAL is the exit
+    this very call just placed, not one it's discovering after the fact. """
     orders_list = fetch_orders_list(redis_cursor=ctx["state_cursor"], request_id=str(ctx["request_id"]))
     ctx["orders_list"] = orders_list
     last_order = orders_list[-1] if orders_list else None
-    if last_order and last_order.get("exit_type") == "MANUAL":
+    if last_order and last_order.get("exit_type") == "MANUAL" and not record_manual:
         return
     leg_trades = _split_leg_trades(ctx, orders_list)
     if leg_trades is None:
@@ -494,6 +501,98 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
         convert_leg_orders_to_trade(ctx)
 
 
+def manual_exit_legs(ctx, prices, leg_keys=None):
+    """ Manual, full-quantity MARKET exit (spec §8.3) — the OMS's
+    /exit_position and /exit_virtual_position, called on ctx["legs"] rebuilt
+    by rebuild_legs_from_open_orders. Unlike place_exit_order_for_leg (ladder-
+    driven, partial-quantity), this always exits a leg's ENTIRE remaining
+    quantity, exit_type MANUAL, and records the trade itself once every leg is
+    flat (convert_leg_orders_to_trade(ctx, record_manual=True) — nobody else
+    will). Returns {"exited": [leg_key, ...], "refused": {leg_key: reason}}. """
+    exited, refused = [], {}
+
+    if leg_keys is None:
+        target_keys = [k for k, leg in ctx["legs"].items() if leg["quantity_left"] > 0]
+    else:
+        target_keys = []
+        for leg_key in leg_keys:
+            leg = ctx["legs"].get(leg_key)
+            if leg is None:
+                refused[leg_key] = "unknown leg_key"
+            elif leg["quantity_left"] > 0:
+                target_keys.append(leg_key)
+
+    exit_orders = [{"transaction_type": "SELL" if ctx["legs"][k]["position_type"] == "LONG" else "BUY",
+                   "leg": ctx["legs"][k]} for k in target_keys]
+
+    for exit_order in sequence(exit_orders):
+        leg = exit_order["leg"]
+        leg_key = leg["leg_key"]
+        exit_transaction = exit_order["transaction_type"]
+        exit_quantity = leg["quantity_left"]
+
+        if ctx["mode"] == "vt":
+            price = prices.get(leg_key)
+            if price is None:
+                refused[leg_key] = "no price"
+                continue
+            order_candle = {"symbol": leg["tradingsymbol"], "timestamp": datetime.datetime.now(), "close": price}
+            leg["quantity_left"] = 0
+            ctx["orders_list"] = place_vt_order(
+                app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], order_candle=order_candle,
+                position_type=leg["position_type"], quantity=exit_quantity, quantity_left=0,
+                transaction_type=exit_transaction, order_type="MARKET", exit_type="MANUAL",
+                params=leg["order_params"], lot_size=leg["lot_size"], trade_action="EXIT", trigger_price=price,
+                user_id=ctx["user_id"], strategy_id=ctx["strategy_id"], request_id=ctx["request_id"],
+                market=ctx["market"], market_type=ctx["market_type"], exchange=leg["order_exchange"],
+                data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg_key)
+            exited.append(leg_key)
+
+        else:
+            inputs = ctx["parameters"]
+            order_status, lt_response = place_lt_order(
+                symbol=leg["tradingsymbol"], exchange=leg["order_exchange"], quantity=exit_quantity,
+                transaction_type=exit_transaction, order_type="MARKET", lot_size=leg["lot_size"],
+                credential_id=ctx["credential_id"], validity=inputs.get("order_validity", "DAY"),
+                asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
+                option_type=leg.get("option_type"), strike_price=leg.get("strike_price"), underlying=ctx["underlying"],
+                max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
+            if order_status != "success":
+                _alert(ctx, f"Error placing manual exit order for {leg_key}: {lt_response}", "Manual Exit Order Error")
+                refused[leg_key] = f"order placement failed: {lt_response}"
+                continue
+
+            polling_status, live_response = poll_order_status(
+                credential_id=str(ctx["credential_id"]), order_id=lt_response["order_id"],
+                exchange=leg["order_exchange"], request_id=ctx["request_id"], user_id=ctx["user_id"],
+                strategy_id=ctx["strategy_id"])
+            if polling_status != "success":
+                _alert(ctx, f"Error polling manual exit order for {leg_key}: {live_response}", "Manual Exit Polling Error")
+                refused[leg_key] = f"polling failed: {live_response}"
+                continue
+
+            leg["quantity_left"] = 0
+            _, orders_list = save_lt_order(
+                app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], orders_list=ctx.get("orders_list", []),
+                symbol=leg["tradingsymbol"], quantity=exit_quantity, quantity_left=0,
+                position_type=leg["position_type"], transaction_type=exit_transaction, order_type="MARKET",
+                exit_type="MANUAL", params=leg["order_params"], market_type=ctx["market_type"], trade_action="EXIT",
+                trigger_price=live_response["average_price"], lot_size=leg["lot_size"], user_id=ctx["user_id"],
+                strategy_id=ctx["strategy_id"], request_id=ctx["request_id"], exchange=leg["order_exchange"],
+                exchange_timestamp=live_response["timestamp"], order_id=lt_response["order_id"],
+                broker_response=live_response, option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
+                underlying=ctx["underlying"], data_key=leg["data_key"], venue=ctx["venue"],
+                group_id=leg.get("group_id"), leg_key=leg_key,
+                broker=lt_response.get("broker"), broker_symbol=lt_response.get("broker_symbol"))
+            ctx["orders_list"] = orders_list
+            exited.append(leg_key)
+
+    if ctx["legs"] and all(l["quantity_left"] == 0 for l in ctx["legs"].values()):
+        convert_leg_orders_to_trade(ctx, record_manual=True)
+
+    return {"exited": exited, "refused": refused}
+
+
 def _refresh_leg_candles(ctx):
     clock_rows = ctx["feeds"].get(ctx["clock_feed"], [])
     clock_candle = clock_rows[-1] if clock_rows else None
@@ -509,6 +608,25 @@ def _refresh_leg_candles(ctx):
             leg["candle"] = last_candle(ctx["rdb_cursor"], leg["data_key"], "1m") or clock_candle
 
 
+def _reconcile_legs_with_state(ctx):
+    """ Re-reads this request's own orders and folds in whatever closed a leg
+    from outside this process (a manual exit, another instance) — so this
+    strategy never re-exits a leg that's already gone, and notices one that's
+    partly gone (spec §8.3). Returns True once every leg is flat. """
+    ctx["orders_list"] = fetch_orders_list(redis_cursor=ctx["state_cursor"], request_id=str(ctx["request_id"]))
+    open_orders = check_open_orders(ctx["orders_list"])
+    for leg in ctx["legs"].values():
+        if leg["quantity_left"] <= 0:
+            continue
+        open_leg = open_orders.get(leg["tradingsymbol"])
+        if open_leg is None:
+            leg["quantity_left"] = 0
+            ctx["logger"].info(f"{leg['leg_key']} closed outside the strategy")
+        elif open_leg["quantity_left"] < leg["quantity_left"]:
+            leg["quantity_left"] = open_leg["quantity_left"]
+    return all(leg["quantity_left"] == 0 for leg in ctx["legs"].values())
+
+
 def monitor_open_position(ctx):
     """ Iterates ctx["tick_source"], refreshing every leg's candle, running
     the plugin's update_position_on_candle hook, evaluating exits (the
@@ -521,6 +639,12 @@ def monitor_open_position(ctx):
         ctx["candle_time"] = moment.time() if hasattr(moment, "time") else moment
         ctx["feeds"] = feeds_view
         _refresh_leg_candles(ctx)
+
+        # Cheap per-candle check (spec §8.3): only re-reads the orders list
+        # when its length actually moved since we last saw it.
+        if ctx["state_cursor"].llen(f"{ctx['request_id']}_orders") != len(ctx["orders_list"]):
+            if _reconcile_legs_with_state(ctx):
+                return  # every leg already closed elsewhere - whoever closed them recorded the trade
 
         update_on_candle = getattr(plugin, "update_position_on_candle", None)
         if update_on_candle:
@@ -540,9 +664,19 @@ def monitor_open_position(ctx):
                     exit_side = "SELL" if leg["position_type"] == "LONG" else "BUY"
                     exit_orders.append({"transaction_type": exit_side, "leg": leg, "exit_type": exit_type})
 
-        for exit_order in sequence(exit_orders):
-            leg = exit_order["leg"]
-            place_exit_order_for_leg(ctx, leg, exit_order["exit_type"], leg.get("candle", ctx.get("spot_candle")))
+        if exit_orders:
+            token = acquire_exit_mutex(ctx["state_cursor"], ctx["request_id"])
+            if token is None:
+                ctx["logger"].warning("Exit mutex held elsewhere; skipping this candle's exits")
+            else:
+                try:
+                    _reconcile_legs_with_state(ctx)  # forced - a manual exit may have landed since the cheap check above
+                    exit_orders = [eo for eo in exit_orders if eo["leg"]["quantity_left"] > 0]
+                    for exit_order in sequence(exit_orders):
+                        leg = exit_order["leg"]
+                        place_exit_order_for_leg(ctx, leg, exit_order["exit_type"], leg.get("candle", ctx.get("spot_candle")))
+                finally:
+                    release_exit_mutex(ctx["state_cursor"], ctx["request_id"], token)
 
         after_exits = getattr(plugin, "after_exit_orders_placed", None)
         if after_exits:

@@ -2,6 +2,8 @@ from trigerr.utils import calculate_brokerage
 from trigerr import config
 import json
 import datetime
+import secrets
+import time
 from bson import ObjectId
 import requests
 
@@ -86,7 +88,7 @@ def check_open_orders(orders_list):
                     # Adding Must Have Fields
                     quantity_dict[trade_symbol]["underlying"] = order.get("underlying", "")
                     # A resumed leg is priced and exited by these (spec sec 8.1)
-                    for field in ("data_key", "venue", "group_id", "leg_key"):
+                    for field in ("data_key", "venue", "group_id", "leg_key", "lot_size"):
                         quantity_dict[trade_symbol][field] = order.get(field)
                     quantity_dict[trade_symbol]["buy_quantity"] = order["quantity"]
                     quantity_dict[trade_symbol]["quantity"] = order["quantity"]
@@ -294,6 +296,47 @@ def check_existing_order(symbol, exit_type, orders_list, entry_time):
 def sequence(orders):
     """ every BUY before every SELL (stable) — spec §8.2 """
     return sorted(orders, key=lambda o: o["transaction_type"] != "BUY")
+
+
+# Long enough for a multi-leg live exit (placement + fill poll per leg); a
+# crashed holder blocks other exiters for at most this long.
+EXIT_MUTEX_TTL_S = 120
+
+
+def acquire_exit_mutex(redis_cursor, request_id, wait_s=10):
+    """ Per-request exit mutex (spec §8.3): serializes everyone who places
+    exit orders for a request -- a manual exit (OMS) and a running strategy's
+    own exits -- so a leg already closed by one is never exited again by the
+    other. SET NX EX EXIT_MUTEX_TTL_S, retried every 0.2s up to wait_s. Returns the token to
+    pass to release_exit_mutex, or None if it could not be acquired in time. """
+    key = f"{request_id}:exit_mutex"
+    deadline = time.monotonic() + wait_s
+    while True:
+        token = secrets.token_hex(8)
+        try:
+            if redis_cursor.set(key, token, nx=True, ex=EXIT_MUTEX_TTL_S):
+                return token
+        except Exception as e:
+            print(f"Exception in acquiring exit mutex : {e}")
+            return None
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.2)
+
+
+def release_exit_mutex(redis_cursor, request_id, token):
+    """ Deletes the exit mutex only if it still holds `token` -- never clears
+    a mutex someone else has since acquired (e.g. after this holder's own
+    30s TTL already expired it). """
+    key = f"{request_id}:exit_mutex"
+    try:
+        current = redis_cursor.get(key)
+        if isinstance(current, bytes):
+            current = current.decode()
+        if current == token:
+            redis_cursor.delete(key)
+    except Exception as e:
+        print(f"Exception in releasing exit mutex : {e}")
 
 
 # def check_order_status(credential_id, order_id, exchange):
