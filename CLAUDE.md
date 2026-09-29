@@ -72,7 +72,11 @@ Trigerr is a Python library for algorithmic trading workflows supporting equitie
 - **trigerr/config.py**: Central configuration for API keys and service URLs (data_url, orders_url)
 - **trigerr/data/**: Data fetching modules
   - `historical.py`: Historical OHLCV data via REST API (EOD, intraday, index, futures, options)
-  - `live.py`: Real-time market data streaming
+  - `market.py`: Live market data off the Redis Streams contract — `ltp`, `candles`,
+    `last_candle`, `candle_stream`, `resolve_data_source` (`data_key = {VENDOR}:{VENUE}:{symbol}`,
+    see `PLATFORM_TARGET_ARCHITECTURE.md` §6–7). Replaces the old `live.py`, which is deleted.
+- **trigerr/symbols.py**: `canonical_symbol`, `data_key` — the only place a data key is built;
+  strategies never construct key strings themselves.
 - **trigerr/orders/**: Order execution modules
   - `live.py`: Live trading order placement via broker APIs
   - `virtual.py`: Paper trading simulation

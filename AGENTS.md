@@ -14,7 +14,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 3. **Tenancy pattern is fixed**: config loads from the `platform_config` Mongo keyed by
    `(tenant, scope)` with per-tenant `configs_<tenant>` views, bootstrap via `CONFIG_MONGO_URI` +
    `TENANT`, offline fallback via `CONFIG_JSON_FILE`. Mirror
-   `trigerr-trading-strategies/sts_config.py` — do not invent new config mechanisms.
+   `trigerr-trading-strategies/tts_config.py` — do not invent new config mechanisms.
 4. **Do not touch live sysstra infrastructure**: never write to, repoint, or "test against" the
    production Mongo/Redis/S3/webhooks whose values appear in legacy config files. Verification
    uses local instances or `CONFIG_JSON_FILE` offline mode.
@@ -86,7 +86,10 @@ Trigerr is a Python library for algorithmic trading workflows supporting equitie
 - **trigerr/config.py**: Central configuration for API keys and service URLs (data_url, orders_url)
 - **trigerr/data/**: Data fetching modules
   - `historical.py`: Historical OHLCV data via REST API (EOD, intraday, index, futures, options)
-  - `live.py`: Real-time market data streaming
+  - `market.py`: Live market data off the Redis Streams contract — `ltp`, `candles`,
+    `last_candle`, `candle_stream`, `resolve_data_source`. Replaces the old `live.py`, which is
+    deleted.
+- **trigerr/symbols.py**: `canonical_symbol`, `data_key` — the only place a data key is built.
 - **trigerr/orders/**: Order execution modules
   - `live.py`: Live trading order placement via broker APIs
   - `virtual.py`: Paper trading simulation
