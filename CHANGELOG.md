@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- `trigerr.framework.memory_state_cursor()`: an in-process stand-in for the state Redis, so a backtest runs
+  hermetically (no real Redis key can be read or written).
+- `trigerr.orders.place_bt_leg_order(...)`: a backtest order in exactly `place_vt_order`'s document shape,
+  stamped from the replayed candle, with no database write, no alert, and no swallowed errors. The legacy
+  `place_bt_order` is unchanged.
+
+### Changed
+- `framework.execution_core`: `bt` is now a first-class mode. Entry, exit, unwind, manual exit and trade
+  conversion each name `vt`, `lt` and `bt` explicitly and raise `ValueError` on any other mode. Previously
+  "not vt" meant live, so a backtest that got past its price read would have reached `place_lt_order` and
+  written to the real `lt_trades`. The `vt` and `lt` branch bodies are unchanged. A backtest's ctx takes
+  `rdb_cursor=None` and a `memory_state_cursor()` as `state_cursor`; its trades collect in `ctx["bt_trades"]`.
+- `_entry_pricing_window_ok` takes an optional `day`, so a backtest checks the pricing window of the day it is
+  replaying rather than the wall-clock weekday.
+- Backtest legs are priced off the clock candle; derivative (option/futures) legs still need the live expiry map
+  and stop with a `KeyError` in a backtest until historical option pricing lands.
+
+---
+
 ## [0.6.0] - 2026-09-24
 
 ### Changed

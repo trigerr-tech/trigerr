@@ -28,12 +28,19 @@ is fetched live (vt/lt, via last_candle) but falls back to the clock candle
 in bt, since no strike-aware historical options feed is resolved after entry
 here (that would need historical option data fetched reactively once a
 strike is known - out of scope; this preserves, not introduces, the original
-harness's bt-side simplification for options legs). """
+harness's bt-side simplification for options legs).
+
+bt is a first-class mode here, not a variant of vt: every placement site names vt, lt and bt
+explicitly and raises on anything else, so a backtest can never fall through into a live order.
+A backtest's ctx carries an in-memory state cursor (trigerr.framework.bt_state) and no market-data
+cursor; its orders are stamped from the replayed candle and its trades collect in
+ctx["bt_trades"] for the driver to persist. """
 
 import datetime
 
 from trigerr.orders.virtual import place_vt_order, save_vt_trade
 from trigerr.orders.live import place_lt_order, save_lt_order, poll_order_status, save_lt_trade
+from trigerr.orders.backtest import place_bt_leg_order
 from trigerr.orders.orders_utils import (fetch_orders_list, convert_to_trades, check_existing_order, sequence,
                                          check_open_orders, acquire_exit_mutex, release_exit_mutex, renew_exit_mutex)
 from trigerr.data.market import ltp, last_candle
@@ -89,8 +96,8 @@ def build_leg_order_params(ctx, leg):
     return params
 
 
-def _entry_pricing_window_ok(ctx, price):
-    today = datetime.datetime.today().strftime("%A")
+def _entry_pricing_window_ok(ctx, price, day=None):
+    today = (day or datetime.datetime.today()).strftime("%A")
     return any(slot["start_price"] <= price <= slot["end_price"]
               for slot in ctx["market_config"]["entry_pricing"][today])
 
@@ -130,6 +137,11 @@ def place_entry_order_for_leg(ctx, leg):
     ladder, and registers it in ctx["legs"]. Returns True on success. Does
     NOT poll for lt — enter_legs places every leg first, then reconciles
     (defect #4's ordering fix). """
+    if ctx["mode"] == "bt":
+        return _place_bt_entry_for_leg(ctx, leg)
+    if ctx["mode"] not in ("vt", "lt"):
+        raise ValueError(f"unknown mode {ctx['mode']!r}: refusing to place an entry")
+
     inputs = ctx["parameters"]
     rdb_cursor = ctx["rdb_cursor"]
 
@@ -237,6 +249,60 @@ def place_entry_order_for_leg(ctx, leg):
     return True
 
 
+def _bt_clock_candle(ctx):
+    """ The candle the strategy acted on: the last row of the clock feed's point-in-time view. A
+    backtest fills at its close (PLATFORM_TARGET_ARCHITECTURE §7), and — until historical option
+    pricing exists — prices every leg off it, exactly as _refresh_leg_candles already does. """
+    rows = ctx["feeds"].get(ctx["clock_feed"])
+    if not rows:
+        raise ValueError("backtest has no clock candle to price against")
+    return rows[-1]
+
+
+def _place_bt_entry_for_leg(ctx, leg):
+    """ place_entry_order_for_leg's backtest twin: same sizing, same target/stop ladder, same order
+    shape — but priced off the replayed candle instead of a live tick, and stored only on the
+    in-memory state cursor. Touches no live Redis, database, broker or alert channel. """
+    inputs = ctx["parameters"]
+    candle = _bt_clock_candle(ctx)
+    order_candle = {"symbol": leg["exit_symbol"], "close": candle["close"], "timestamp": candle["timestamp"]}
+
+    if not _entry_pricing_window_ok(ctx, order_candle["close"], day=candle["timestamp"]):
+        ctx["logger"].warning(f"Entry price {order_candle['close']} outside the pricing window "
+                              f"for {candle['timestamp']:%A}")
+        return False
+
+    t1_percent = float(inputs.get("t1_percent", 0))
+    sl_percent = float(inputs.get("c1_sl_percent", inputs.get("sl_percent", 0)))
+
+    entry_price = order_candle["close"]
+    leg["entry_price"] = entry_price
+    leg.update(calculate_target_and_stoploss_prices(entry_price, leg["position_type"], t1_percent, sl_percent))
+    leg["trailing_sl"] = leg["sl_price"]
+    leg["quantity"] = _size_leg(ctx, leg, entry_price)
+    if not leg["quantity"]:
+        return False
+    leg["quantity_left"] = leg["quantity"]
+    leg["order_params"] = build_leg_order_params(ctx, leg)
+
+    orders_list = place_bt_leg_order(
+        redis_cursor=ctx["state_cursor"], order_candle=order_candle,
+        quantity=leg["quantity"], quantity_left=leg["quantity"], position_type=leg["position_type"],
+        transaction_type=leg["transaction_type"], order_type=inputs.get("order_type", "MARKET"),
+        exit_type=None, trade_action="ENTRY", lot_size=leg["lot_size"],
+        user_id=ctx["user_id"], strategy_id=ctx["strategy_id"], request_id=ctx["request_id"],
+        market=ctx["market"], market_type=ctx["market_type"], exchange=leg["order_exchange"],
+        params=leg["order_params"], data_key=leg["data_key"], venue=ctx["venue"],
+        group_id=leg.get("group_id"), leg_key=leg["leg_key"])
+    leg["entry_time"] = _as_datetime(orders_list[-1]["order_timestamp"])
+    leg["tradingsymbol"] = orders_list[-1]["symbol"]
+    ctx["orders_list"] = orders_list
+
+    ctx["legs"][leg["leg_key"]] = leg
+    ctx["entry_spot"] = ctx.get("spot_price", leg["entry_price"])
+    return True
+
+
 def _unwind_filled_legs(ctx, filled_legs):
     """ Immediately market-exits every already-filled leg when a sibling leg
     in the same multi-leg entry failed, instead of leaving a naked position
@@ -278,7 +344,20 @@ def _unwind_filled_legs(ctx, filled_legs):
                     market_type=ctx["market_type"], exchange=leg["order_exchange"], params=leg.get("order_params"),
                     data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
                 msg = f"Unwound {leg['leg_key']} (vt, MANUAL) after a sibling leg failed to enter.{price_note}"
-            else:
+            elif ctx["mode"] == "bt":
+                candle = _bt_clock_candle(ctx)
+                ctx["orders_list"] = place_bt_leg_order(
+                    redis_cursor=ctx["state_cursor"],
+                    order_candle={"symbol": leg["tradingsymbol"], "timestamp": candle["timestamp"],
+                                 "close": candle["close"]},
+                    quantity=leg["quantity_left"], quantity_left=0, position_type=leg["position_type"],
+                    transaction_type=exit_transaction, order_type="MARKET", exit_type="MANUAL",
+                    trade_action="EXIT", lot_size=leg["lot_size"], user_id=ctx["user_id"],
+                    strategy_id=ctx["strategy_id"], request_id=ctx["request_id"], market=ctx["market"],
+                    market_type=ctx["market_type"], exchange=leg["order_exchange"], params=leg.get("order_params"),
+                    data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
+                msg = f"Unwound {leg['leg_key']} (bt, MANUAL) after a sibling leg failed to enter."
+            elif ctx["mode"] == "lt":
                 unwind_status, unwind_response = place_lt_order(
                     symbol=leg["tradingsymbol"], exchange=leg["order_exchange"], quantity=leg["quantity_left"],
                     transaction_type=exit_transaction, order_type="MARKET", lot_size=leg["lot_size"],
@@ -317,6 +396,8 @@ def _unwind_filled_legs(ctx, filled_legs):
                             broker=unwind_response.get("broker"), broker_symbol=unwind_response.get("broker_symbol"))
                         ctx["orders_list"] = orders_list
                         msg = f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) (lt, MANUAL) after a sibling leg failed to enter."
+            else:
+                raise ValueError(f"unknown mode {ctx['mode']!r}: refusing to place an unwind order")
             _alert(ctx, msg, "Leg Unwind")
     finally:
         release_exit_mutex(ctx["state_cursor"], ctx["request_id"], token)
@@ -479,8 +560,12 @@ def convert_leg_orders_to_trade(ctx, record_manual=False):
         trade["combined_pnl"] = net
         if ctx["mode"] == "vt":
             save_vt_trade(app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], trade_dict=trade)
-        else:
+        elif ctx["mode"] == "bt":
+            ctx.setdefault("bt_trades", []).append(trade)   # in memory; the driver persists them once
+        elif ctx["mode"] == "lt":
             save_lt_trade(app_db_cursor=ctx["app_db_cursor"], redis_cursor=ctx["state_cursor"], trade_dict=trade)
+        else:
+            raise ValueError(f"unknown mode {ctx['mode']!r}: refusing to record a trade")
 
 
 def place_exit_order_for_leg(ctx, leg, exit_type, candle):
@@ -511,7 +596,19 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             market=ctx["market"], market_type=ctx["market_type"], exchange=leg["order_exchange"],
             data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
 
-    else:
+    elif ctx["mode"] == "bt":
+        leg["quantity_left"] -= exit_quantity
+        ctx["orders_list"] = place_bt_leg_order(
+            redis_cursor=ctx["state_cursor"], order_candle={**candle, "symbol": leg["tradingsymbol"]},
+            position_type=leg["position_type"], quantity=exit_quantity, quantity_left=leg["quantity_left"],
+            transaction_type=exit_transaction, order_type=inputs.get("order_type", "MARKET"),
+            exit_type=exit_type, params=leg["order_params"], lot_size=leg["lot_size"], trade_action="EXIT",
+            trigger_price=_exit_trigger_price(ctx, leg, exit_type, candle),
+            user_id=ctx["user_id"], strategy_id=ctx["strategy_id"], request_id=ctx["request_id"],
+            market=ctx["market"], market_type=ctx["market_type"], exchange=leg["order_exchange"],
+            data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg["leg_key"])
+
+    elif ctx["mode"] == "lt":
         order_status, lt_response = place_lt_order(
             symbol=leg["tradingsymbol"], exchange=leg["order_exchange"], quantity=exit_quantity,
             transaction_type=exit_transaction, order_type="MARKET", lot_size=leg["lot_size"],
@@ -548,6 +645,9 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             group_id=leg.get("group_id"), leg_key=leg["leg_key"],
             broker=lt_response.get("broker"), broker_symbol=lt_response.get("broker_symbol"))
         ctx["orders_list"] = orders_list
+
+    else:
+        raise ValueError(f"unknown mode {ctx['mode']!r}: refusing to place an exit order")
 
     if all(l["quantity_left"] == 0 for l in ctx["legs"].values()):
         convert_leg_orders_to_trade(ctx)
@@ -600,7 +700,11 @@ def manual_exit_legs(ctx, prices, leg_keys=None):
                 data_key=leg["data_key"], venue=ctx["venue"], group_id=leg.get("group_id"), leg_key=leg_key)
             exited.append(leg_key)
 
-        else:
+        elif ctx["mode"] == "bt":
+            refused[leg_key] = "manual exit is not available in a backtest"
+            continue
+
+        elif ctx["mode"] == "lt":
             inputs = ctx["parameters"]
             order_status, lt_response = place_lt_order(
                 symbol=leg["tradingsymbol"], exchange=leg["order_exchange"], quantity=exit_quantity,
@@ -641,6 +745,9 @@ def manual_exit_legs(ctx, prices, leg_keys=None):
                 broker=lt_response.get("broker"), broker_symbol=lt_response.get("broker_symbol"))
             ctx["orders_list"] = orders_list
             exited.append(leg_key)
+
+        else:
+            raise ValueError(f"unknown mode {ctx['mode']!r}: refusing to place a manual exit")
 
     if ctx["legs"] and all(l["quantity_left"] == 0 for l in ctx["legs"].values()):
         convert_leg_orders_to_trade(ctx, record_manual=True)
