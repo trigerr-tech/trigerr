@@ -10,8 +10,7 @@ live feed only ever holds ticks that have already arrived. """
 def truncate_feeds_to_moment(feeds, moment):
     """ Returns a new {name: rows} with every timestamped feed's rows
     filtered to timestamp <= moment. A feed whose rows aren't timestamped
-    candles (a mongo_collection without a timestamp column, a pickled model
-    object) passes through unchanged — truncation only applies where "point
+    candles passes through unchanged — truncation only applies where "point
     in time" is a meaningful concept. """
     truncated = {}
     for name, rows in feeds.items():

@@ -1,5 +1,7 @@
 import types
 
+import pytest
+
 from trigerr.framework.compiler import (
     compile_strategy, normalize, resolve, infer_types, infer_subscriptions, validate, lower,
     resolve_parameter_references,
@@ -147,6 +149,24 @@ def test_validate_flags_missing_clock_and_undeclared_feed():
     errors = validate(ast)
     assert any("no clock feed" in e for e in errors)
     assert any("ghost" in e for e in errors)
+
+
+@pytest.mark.parametrize("kind", ["mongo_collection", "pickled_model", "no_such_kind"])
+def test_validate_flags_an_unknown_feed_kind(kind):
+    """ A feed kind that is not registered (never was, or was removed) is a named compile error — not a KeyError
+    at fetch time, in the middle of a run. """
+    source = {"clock": "spot", "feeds": {"spot": {"kind": kind, "name": "x"}},
+              "entry": {"when": {"op": "lit", "value": True}, "legs": []}}
+    ast = infer_types(resolve(normalize(source)))
+    assert any(f"feed 'spot' has unknown kind '{kind}'" in e for e in validate(ast))
+
+
+def test_validate_accepts_every_registered_feed_kind_and_derived_feeds():
+    source = {"clock": "spot",
+              "feeds": {"spot": {"kind": "intraday_candles", "symbol": "NIFTY", "granularity": 1},
+                        "spot3": {"derive": "spot", "transform": "resample", "granularity": 3}},
+              "entry": {"when": {"op": "lit", "value": True}, "legs": []}}
+    assert validate(infer_types(resolve(normalize(source)))) == []
 
 
 def test_validate_flags_duplicate_leg_keys():

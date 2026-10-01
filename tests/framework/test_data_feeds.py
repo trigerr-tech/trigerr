@@ -66,15 +66,6 @@ def test_fetch_intraday_candles_futures_options_call_the_right_underlying_fetche
     assert calls["options"]["option_type"] == "PE" and calls["options"]["strike_price"] == 100
 
 
-def test_mongo_collection_and_pickled_model_read_from_ctx():
-    ctx = {"collections": {"nse_pre_open": [{"advances": 10, "declines": 5}]},
-           "models": {"models/sha_model.pkl": "the-loaded-model-object"}}
-    assert DATA_FEED_KINDS["mongo_collection"]["fetch_historical"]({"name": "nse_pre_open"}, ctx) == \
-        [{"advances": 10, "declines": 5}]
-    assert DATA_FEED_KINDS["pickled_model"]["fetch_historical"]({"path": "models/sha_model.pkl"}, ctx) == \
-        "the-loaded-model-object"
-
-
 def test_resolve_feeds_substitutes_params_and_orders_derived_after_base(monkeypatch):
     rows = _candles([10, 11, 12, 13, 14, 15])
     captured_symbol = {}

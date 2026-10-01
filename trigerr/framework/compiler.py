@@ -302,6 +302,14 @@ def validate(ast):
     elif ast["clock"] not in ast["feeds"]:
         errors.append(f"clock feed '{ast['clock']}' is not declared in feeds")
 
+    from trigerr.framework.data_feeds import DATA_FEED_KINDS    # lazy: data_feeds imports this module
+    for name, spec in ast["feeds"].items():
+        if not isinstance(spec, dict) or "derive" in spec or "kind" not in spec:
+            continue
+        kind = spec["kind"]
+        if kind not in DATA_FEED_KINDS and not (isinstance(kind, str) and kind.startswith("$")):
+            errors.append(f"feed '{name}' has unknown kind '{kind}' (known: {', '.join(sorted(DATA_FEED_KINDS))})")
+
     subscriptions = infer_subscriptions(ast)
     for feed_name in subscriptions:
         if feed_name not in ast["feeds"]:

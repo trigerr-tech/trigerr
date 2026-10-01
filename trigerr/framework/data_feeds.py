@@ -1,15 +1,13 @@
 """ DATA_FEED_KINDS: one resolver per data source a strategy can declare in
 its FEEDS block. Each resolver is `fetch_historical(feed_spec, ctx) -> rows`
-— a list of dict candles for market-data kinds, or the raw stored value for
-collection/model kinds.
+— a list of dict candles.
 
-Candle-kind resolvers call the SDK's own HTTP-based historical fetchers
-directly — pure, no Redis/Mongo. `mongo_collection`/`pickled_model` read
-whatever the runtime already placed on ctx (`ctx["collections"]`/
-`ctx["models"]`) instead of importing pymongo/pickle here — the same pattern
-`instrument.py` already uses for broker/symbol metadata, and what keeps this
-package infra-free (Decision #8: the SDK is the pure core; live/DB access is
-an engine-side adapter).
+Resolvers call the SDK's own HTTP-based historical fetchers directly — pure,
+no Redis/Mongo, which is what keeps this package infra-free (Decision #8: the
+SDK is the pure core; live/DB access is an engine-side adapter). There is
+deliberately no kind that reads a Mongo collection or loads a model file by
+name: market data comes from the Data API, and a new source is added as a
+named kind (one resolver), never as a pass-through to storage.
 
 `resolve_feeds` is the entry point: it resolves every declared feed — base
 feeds via a DATA_FEED_KINDS resolver, derived feeds via a CANDLE_TRANSFORMS
@@ -76,16 +74,6 @@ def _fetch_options(feed_spec, ctx):
     return _apply_declared_indicators(rows, feed_spec)
 
 
-def _fetch_mongo_collection(feed_spec, ctx):
-    return ctx["collections"][feed_spec["name"]]
-
-
-def _fetch_pickled_model(feed_spec, ctx):
-    """ A model is a single object, not a candle series — a "ref" op can't
-    read it; a native node's plugin reads ctx["feeds"][name] directly. """
-    return ctx["models"][feed_spec["path"]]
-
-
 DATA_FEED_KINDS = {
     "eod": {"fetch_historical": _fetch_eod,
             "spec": {"label": "End-of-day candles", "params": ["symbol", "lookback_days", "exchange"]}},
@@ -97,10 +85,6 @@ DATA_FEED_KINDS = {
     "options": {"fetch_historical": _fetch_options,
                 "spec": {"label": "Option candles",
                          "params": ["symbol", "option_type", "strike_price", "expiry", "granularity"]}},
-    "mongo_collection": {"fetch_historical": _fetch_mongo_collection,
-                          "spec": {"label": "Mongo collection (e.g. nse_pre_open)", "params": ["name"]}},
-    "pickled_model": {"fetch_historical": _fetch_pickled_model,
-                       "spec": {"label": "Pickled ML model", "params": ["path"]}},
 }
 
 
