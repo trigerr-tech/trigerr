@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.7.2] - 2026-10-06
+
 ### Added
 - `trigerr.framework.memory_state_cursor()`: an in-process stand-in for the state Redis, so a backtest runs
   hermetically (no real Redis key can be read or written).
