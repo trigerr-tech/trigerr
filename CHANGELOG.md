@@ -16,7 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stamped from the replayed candle, with no database write, no alert, and no swallowed errors. The legacy
   `place_bt_order` is unchanged.
 
+### Removed
+- The `mongo_collection` and `pickled_model` data-feed kinds. `mongo_collection` let a strategy name any collection
+  in the tenant database, and `pickled_model` unpickled a path (remote code execution on a multi-tenant host).
+  Neither could run: the harness never provisioned `ctx["collections"]` or `ctx["models"]`. A strategy that names
+  either kind is now refused when it is compiled.
+
 ### Changed
+- `compile_strategy` reports `feed 'x' has unknown kind 'k' (known: ...)` for a base feed whose kind is not
+  registered, instead of a `KeyError` in the middle of a run. A feed with no kind at all is unchanged.
 - `framework.execution_core`: `bt` is now a first-class mode. Entry, exit, unwind, manual exit and trade
   conversion each name `vt`, `lt` and `bt` explicitly and raise `ValueError` on any other mode. Previously
   "not vt" meant live, so a backtest that got past its price read would have reached `place_lt_order` and
