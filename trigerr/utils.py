@@ -1490,13 +1490,17 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
                 gst = 0.18
                 sebi_fees = 0.0001
                 clearing_charge = 0
+                # Orders carry the segment they went to ("NFO" for NSE options and futures), cash symbols the exchange.
+                nse = exchange in ("NSE", "NFO", "XNSE")
+                # Statutory rates in force from 1 April 2026: exchange charges per NSE/FA/73061 (from 1 March 2026), STT on
+                # futures and options per Budget 2026. Not modelled: STT on exercised options, physical settlement.
 
                 # Calculating Turn Over
                 turnover = (buy_price * quantity) + (sell_price * quantity)
 
                 if market_type == "equity" and holding_type == "delivery":
                     broker_fees = 15.34
-                    transaction_fees = 0.00297 if exchange == "NSE" else 0.00375
+                    transaction_fees = 0.00307 if nse else 0.00375
                     stt_fees = 0.1
                     stamp_fees = 0.015
 
@@ -1516,7 +1520,7 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
                     broker_fees_2 = round(turnover * (0.03 / 100), 2)
                     broker_fees = min(broker_fees_1, broker_fees_2)
 
-                    transaction_fees = 0.00297 if exchange == "NSE" else 0.00375
+                    transaction_fees = 0.00307 if nse else 0.00375
                     stamp_fees = 0.003
                     stt_fees = 0.025
 
@@ -1533,9 +1537,9 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
                     broker_fees_1 = 20 * no_of_orders
                     broker_fees_2 = round(turnover * (0.03 / 100), 2)
                     broker_fees = min(broker_fees_1, broker_fees_2)
-                    transaction_fees = 0.00173 if exchange == "NSE" else 0
+                    transaction_fees = 0.00183 if nse else 0
                     stamp_fees = 0.002
-                    stt_fees = 0.02
+                    stt_fees = 0.05
 
                     # Calculating STT Charge
                     stt_charge = round(quantity * sell_price * stt_fees / 100)
@@ -1548,10 +1552,10 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
 
                 else:
                     broker_fees = 20 * no_of_orders
-                    transaction_fees = 0.03503 if exchange == "NSE" else 0.0325
+                    transaction_fees = 0.03553 if nse else 0.0325
                     stamp_fees = 0.003
 
-                    stt_fees = 0.1
+                    stt_fees = 0.15
 
                     # Calculating STT Charge
                     stt_charge = round(quantity * sell_price * stt_fees / 100)

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `calculate_brokerage`, India (`zerodha`): the statutory charges are brought to the rates in force since 1 April 2026 -
+  STT on futures sold 0.02% -> 0.05% and on option premium sold 0.1% -> 0.15% (Budget 2026); NSE exchange charges for cash
+  0.00297% -> 0.00307%, futures 0.00173% -> 0.00183% and options 0.03503% -> 0.03553% (NSE/FA/73061, from 1 March 2026).
+  The `brokerage` and `net_pnl` of every trade recorded after the release come out higher by that much (an option round trip
+  of 44 lots at 90 -> 100: charges 246.81 -> 303.04).
+
+### Fixed
+- `calculate_brokerage` priced an order placed on `NFO` (how the strategies route NSE options and futures) at the BSE rates:
+  options at 0.0325% instead of NSE's, futures with no exchange charge at all. `NFO` and `XNSE` now count as NSE.
+
 ---
 
 ## [0.7.2] - 2026-10-06
