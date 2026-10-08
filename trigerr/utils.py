@@ -1480,11 +1480,30 @@ def send_order_alert(alert_dict):
         pass
 
 
+# Brokerage on Indian intraday equity and futures, per executed order: (percent of the order's value, cap in rupees).
+# The lower of the two is charged; percent None = the flat cap. As the Zerodha branch always did, the percentage is
+# taken on the round trip's turnover against the cap of all its orders. Options are a flat 20 an order at all three.
+# Each broker's published schedule, read 2026-10-08 (upstox.com/brokerage-charges, dhan.co/pricing, zerodha.com/charges).
+# Dhan lists futures with options at a flat 20; another copy of its page puts them under the 0.03% rule, which only
+# differs below a Rs 66,667 notional.
+_IN_BROKERAGE = {
+    "zerodha": {"equity": (0.03, 20), "futures": (0.03, 20)},
+    "upstox": {"equity": (0.1, 20), "futures": (0.05, 20)},
+    "dhan": {"equity": (0.03, 20), "futures": (None, 20)},
+}
+
+
+def _in_brokerage(broker, product, turnover, no_of_orders):
+    percent, cap = _IN_BROKERAGE[broker][product]
+    flat = cap * no_of_orders
+    return flat if percent is None else min(flat, round(turnover * (percent / 100), 2))
+
+
 def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", market_type="options", order_type="MARKET", lot_size=100, position_type="LONG", holding_type="intraday", no_of_orders=2, market="IN", exchange="NSE", spot_price=None, exit_spot_price=None, underlying=None):
     """Function to calculate brokerage"""
     try:
 
-        if broker == "zerodha":
+        if broker in _IN_BROKERAGE:
 
             if market == "IN":
                 gst = 0.18
@@ -1499,7 +1518,9 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
                 turnover = (buy_price * quantity) + (sell_price * quantity)
 
                 if market_type == "equity" and holding_type == "delivery":
-                    broker_fees = 15.34
+                    # Delivery brokerage is nil at Zerodha and Dhan, so this is their DP charge on the sell (Zerodha's
+                    # includes the GST that the total adds again); Upstox charges Rs 20 an order and Rs 20 DP.
+                    broker_fees = {"zerodha": 15.34, "upstox": 20 * no_of_orders + 20, "dhan": 12.5}[broker]
                     transaction_fees = 0.00307 if nse else 0.00375
                     stt_fees = 0.1
                     stamp_fees = 0.015
@@ -1516,9 +1537,7 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
                     stamp_charge = round((quantity * buy_price * stamp_fees)/100, 2)
 
                 elif market_type == "equity" and holding_type == "intraday":
-                    broker_fees_1 = 20 * no_of_orders
-                    broker_fees_2 = round(turnover * (0.03 / 100), 2)
-                    broker_fees = min(broker_fees_1, broker_fees_2)
+                    broker_fees = _in_brokerage(broker, "equity", turnover, no_of_orders)
 
                     transaction_fees = 0.00307 if nse else 0.00375
                     stamp_fees = 0.003
@@ -1534,9 +1553,7 @@ def calculate_brokerage(buy_price, sell_price, quantity, broker="zerodha", marke
                     stamp_charge = round(quantity * buy_price * stamp_fees / 100, 2)
 
                 elif market_type == "futures":
-                    broker_fees_1 = 20 * no_of_orders
-                    broker_fees_2 = round(turnover * (0.03 / 100), 2)
-                    broker_fees = min(broker_fees_1, broker_fees_2)
+                    broker_fees = _in_brokerage(broker, "futures", turnover, no_of_orders)
                     transaction_fees = 0.00183 if nse else 0
                     stamp_fees = 0.002
                     stt_fees = 0.05

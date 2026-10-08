@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `calculate_brokerage` prices `upstox` and `dhan` for the Indian market (it returned `None` for both, so no trade record
+  could be built). Statutory charges are the same as Zerodha's; brokerage follows each broker's published schedule -
+  Upstox: Rs 20 an order for options, the lower of Rs 20 and 0.05% for futures, the lower of Rs 20 and 0.1% for intraday
+  equity, Rs 20 an order plus Rs 20 DP for delivery; Dhan: flat Rs 20 an order for futures and options, the lower of Rs 20 and
+  0.03% for intraday equity, nil brokerage plus Rs 12.50 DP for delivery. Zerodha's results are unchanged by this entry.
+
 ### Changed
 - `calculate_brokerage`, India (`zerodha`): the statutory charges are brought to the rates in force since 1 April 2026 -
   STT on futures sold 0.02% -> 0.05% and on option premium sold 0.1% -> 0.15% (Budget 2026); NSE exchange charges for cash

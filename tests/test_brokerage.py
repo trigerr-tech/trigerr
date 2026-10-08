@@ -87,3 +87,66 @@ def test_spot_is_priced_by_the_callers_as_equity():
 @pytest.mark.parametrize("broker, market", [("zerodha", "US"), ("zerodha", "CRYPTO"), ("someone", "IN"), ("", "IN")])
 def test_a_broker_or_market_with_no_schedule_returns_none(broker, market):
     assert charges(broker=broker, market=market, buy_price=90, sell_price=100, quantity=1000) is None
+
+
+# ---- Upstox and Dhan: the same statutory charges, a different brokerage
+# Brokerage per executed order (each broker's published schedule, read 2026-10-08):
+#   zerodha  delivery nil (DP 15.34 on a sell) | intraday equity and futures: the lower of Rs 20 and 0.03% | options Rs 20
+#   upstox   delivery Rs 20 (+ DP Rs 20 on a sell) | intraday equity: lower of Rs 20 and 0.1% | futures: lower of Rs 20 and 0.05% | options Rs 20
+#   dhan     delivery nil (DP Rs 12.50) | intraday equity: lower of Rs 20 and 0.03% | futures and options: flat Rs 20
+# GST is charged on the DP fee too, so it sits in the same line as brokerage below.
+
+BROKERS = ("zerodha", "upstox", "dhan")
+
+
+@pytest.mark.parametrize("broker", BROKERS)
+def test_options_cost_the_same_at_every_broker(broker):
+    # Rs 20 flat per order everywhere: the options round trip of test_nse_options_round_trip
+    assert charges(broker=broker, buy_price=90, sell_price=100, quantity=1100) == (303.04, 10696.96)
+
+
+@pytest.mark.parametrize("broker", BROKERS)
+def test_a_futures_lot_pays_the_cap_at_every_broker(broker):
+    # 0.03% / 0.05% of 3,307,500 is far above Rs 20, so brokerage is the cap of 40: test_nse_futures_round_trip
+    assert charges(broker=broker, market_type="futures", buy_price=22000, sell_price=22100, quantity=75) == (984.53, 6515.47)
+
+
+@pytest.mark.parametrize("broker, expected_total", [
+    ("zerodha", 38.21),     # brokerage 18.00 (0.03% of 60,000)
+    ("upstox", 52.37),      # brokerage 30.00 (0.05%): SEBI 0.06 | exchange 1.10 | STT 15 | stamp 0.60 | GST 5.61
+    ("dhan", 64.17),        # brokerage 40.00 (flat Rs 20 per order): GST 7.41
+])
+def test_small_futures_trades_show_each_brokers_rule(broker, expected_total):
+    assert charges(broker=broker, market_type="futures", buy_price=100, sell_price=100, quantity=300) == (expected_total, -expected_total)
+
+
+@pytest.mark.parametrize("broker, expected_total", [
+    ("zerodha", 10.76),     # brokerage 6.06 (0.03% of 20,200): SEBI 0.02 | exchange 0.62 | STT 2.55 | stamp 0.30 | GST 1.21
+    ("upstox", 27.44),      # brokerage 20.20 (0.1%): GST 3.75
+    ("dhan", 10.76),        # brokerage 6.06 (0.03%)
+])
+def test_intraday_equity_shows_each_brokers_percentage(broker, expected_total):
+    assert charges(broker=broker, market_type="equity", exchange="NSE", buy_price=100, sell_price=102, quantity=100) == \
+           (expected_total, round(200 - expected_total, 2))
+
+
+@pytest.mark.parametrize("broker, expected_total", [
+    ("zerodha", 40.56),     # DP 15.34: SEBI 0.02 | exchange 0.62 | STT 20.20 | stamp 1.50 | GST 2.88
+    ("upstox", 93.26),      # Rs 20 x 2 orders + DP Rs 20 = 60: GST 10.92
+    ("dhan", 37.21),        # no brokerage, DP 12.50: GST 2.37
+])
+def test_delivery_shows_each_brokers_fees(broker, expected_total):
+    assert charges(broker=broker, market_type="equity", holding_type="delivery", exchange="NSE",
+                   buy_price=100, sell_price=102, quantity=100) == (expected_total, round(200 - expected_total, 2))
+
+
+@pytest.mark.parametrize("broker", ["upstox", "dhan"])
+@pytest.mark.parametrize("market", ["US", "CRYPTO", "MCX"])
+def test_the_new_brokers_are_priced_for_the_indian_market_only(broker, market):
+    assert charges(broker=broker, market=market, buy_price=90, sell_price=100, quantity=1000) is None
+
+
+@pytest.mark.parametrize("broker", ["Upstox", "DHAN", "upstox "])
+def test_the_broker_name_is_matched_exactly(broker):
+    # callers lower-case it (tts_fees.has_fee_model reads None as "refuse"): an unlisted spelling stays unpriced
+    assert charges(broker=broker, buy_price=90, sell_price=100, quantity=1000) is None
