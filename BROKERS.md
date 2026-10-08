@@ -8,6 +8,8 @@ This document provides detailed information about all brokers supported by Trige
 
 - [Indian Brokers](#indian-brokers)
   - [Zerodha](#zerodha)
+  - [Upstox](#upstox)
+  - [Dhan](#dhan)
 - [US Brokers](#us-brokers)
   - [Interactive Brokers](#interactive-brokers)
   - [Charles Schwab](#charles-schwab)
@@ -26,13 +28,17 @@ This document provides detailed information about all brokers supported by Trige
 
 **Supported Markets**: Indian equities, F&O (Futures & Options)
 
+> The statutory charges below (STT, exchange, SEBI, stamp duty, GST) are the rates in force from 1 April 2026 (exchange
+> charges: NSE/FA/73061, from 1 March 2026; STT on futures and options: Budget 2026) and are shared by Upstox and Dhan.
+> An order routed on `NFO` or `XNSE` is priced at the NSE rates. Not modelled: STT on exercised options, physical settlement.
+
 #### Fee Structure
 
 ##### Equity Delivery
 - **Brokerage**: ₹0 (Free)
 - **STT/CTT**: 0.1% on buy & sell
 - **Transaction Charges**: 
-  - NSE: 0.00297%
+  - NSE: 0.00307%
   - BSE: 0.00375%
 - **GST**: 18% on (brokerage + transaction charges)
 - **SEBI Charges**: ₹10 per crore
@@ -42,7 +48,7 @@ This document provides detailed information about all brokers supported by Trige
 - **Brokerage**: ₹20 per order or 0.03% (whichever is lower)
 - **STT/CTT**: 0.025% on sell side
 - **Transaction Charges**: 
-  - NSE: 0.00297%
+  - NSE: 0.00307%
   - BSE: 0.00375%
 - **GST**: 18% on (brokerage + transaction charges)
 - **SEBI Charges**: ₹10 per crore
@@ -50,17 +56,17 @@ This document provides detailed information about all brokers supported by Trige
 
 ##### Futures
 - **Brokerage**: ₹20 per order or 0.03% (whichever is lower)
-- **STT/CTT**: 0.02% on sell side (on premium)
-- **Transaction Charges**: NSE: 0.00173%
+- **STT/CTT**: 0.05% on sell side
+- **Transaction Charges**: NSE: 0.00183%, BSE: nil
 - **GST**: 18% on (brokerage + transaction charges)
 - **SEBI Charges**: ₹10 per crore
 - **Stamp Duty**: 0.002% on buy side
 
 ##### Options
 - **Brokerage**: ₹20 per order (flat)
-- **STT/CTT**: 0.1% on sell side (on premium)
+- **STT/CTT**: 0.15% on sell side (on premium)
 - **Transaction Charges**: 
-  - NSE: 0.03503%
+  - NSE: 0.03553%
   - BSE: 0.0325%
 - **GST**: 18% on (brokerage + transaction charges)
 - **SEBI Charges**: ₹10 per crore
@@ -151,6 +157,37 @@ status, response = place_lt_order(
 - Maximum 5 orders per second per credential
 - Zerodha credentials are required for live trading
 - Paper trading available without broker credentials
+
+### Upstox
+
+**Broker Code**: `"upstox"`
+
+**Supported Markets**: Indian equities, F&O. Statutory charges as for Zerodha; only the brokerage differs.
+
+| Segment | Brokerage per executed order |
+|---|---|
+| Equity delivery | ₹20, plus ₹20 DP charge on a sell |
+| Equity intraday | the lower of ₹20 and 0.1% |
+| Futures | the lower of ₹20 and 0.05% |
+| Options | ₹20 flat |
+
+Source: upstox.com/brokerage-charges, read 2026-10-08. Upstox's API orders carried a promotional ₹10 rate to 31 December 2025;
+the model uses the standard rate.
+
+### Dhan
+
+**Broker Code**: `"dhan"`
+
+**Supported Markets**: Indian equities, F&O. Statutory charges as for Zerodha; only the brokerage differs.
+
+| Segment | Brokerage per executed order |
+|---|---|
+| Equity delivery | nil, plus ₹12.50 DP charge per instruction |
+| Equity intraday | the lower of ₹20 and 0.03% |
+| Futures | ₹20 flat (one copy of Dhan's page puts futures under the 0.03% rule too; the two differ only below a ₹66,667 notional) |
+| Options | ₹20 flat |
+
+Source: dhan.co/pricing, read 2026-10-08. Not modelled: Dhan's auto square-off fee (₹20 plus GST an order).
 
 ---
 
