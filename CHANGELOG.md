@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.7.3] - 2026-10-09
+
 ### Added
 - `calculate_brokerage` prices `upstox` and `dhan` for the Indian market (it returned `None` for both, so no trade record
   could be built). Statutory charges are the same as Zerodha's; brokerage follows each broker's published schedule -
@@ -20,8 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `calculate_brokerage`, India (`zerodha`): the statutory charges are brought to the rates in force since 1 April 2026 -
   STT on futures sold 0.02% -> 0.05% and on option premium sold 0.1% -> 0.15% (Budget 2026); NSE exchange charges for cash
   0.00297% -> 0.00307%, futures 0.00173% -> 0.00183% and options 0.03503% -> 0.03553% (NSE/FA/73061, from 1 March 2026).
-  The `brokerage` and `net_pnl` of every trade recorded after the release come out higher by that much (an option round trip
-  of 44 lots at 90 -> 100: charges 246.81 -> 303.04).
+  The `brokerage` of every trade recorded after the release comes out higher, and its `net_pnl` lower, by that much (an option
+  round trip of 44 lots at 90 -> 100: charges 246.81 -> 303.04).
 
 ### Fixed
 - `calculate_brokerage` priced an order placed on `NFO` (how the strategies route NSE options and futures) at the BSE rates:
