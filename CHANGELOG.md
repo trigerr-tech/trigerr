@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `calculate_brokerage`, India: a SHORT position was charged with its legs swapped. Callers pass the entry as `buy_price`
+  and the exit as `sell_price` whatever the side (`net_pl` relies on it), but STT, which falls on the sale, and stamp duty,
+  which falls on the purchase, were taken from those names as given. A short pays STT on the premium it sold first and stamp
+  duty on the premium it bought back, so every SHORT trade (a SELLER request, vt or lt) was charged STT on the wrong leg:
+  too much when the position lost, too little when it won, by about 0.15% x (exit - entry) x units. Example: short at 85.5,
+  bought back at 95.05, 17 lots of 65: brokerage 291.92 -> 276.24. `net_pnl` already had the right direction. LONG trades,
+  and the OMS manual-exit trades (which pass the real legs on the default side), are unchanged. Trades already recorded keep
+  their old figures. Not changed: delivery equity (it cannot be short), and the US and crypto branches, which have the same
+  entry/exit naming (Schwab equities' SEC fee, Binance futures' position size) but are out of go-live scope.
+
 ---
 
 ## [0.7.3] - 2026-10-09

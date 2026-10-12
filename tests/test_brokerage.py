@@ -41,9 +41,27 @@ def test_bse_options_use_the_bse_rate(exchange):
     assert charges(buy_price=90, sell_price=100, quantity=1000, exchange=exchange) == (272.99, 9727.01)
 
 
-def test_a_short_position_has_the_same_charges_and_the_opposite_sign_of_gross_pnl():
-    # the charges depend on the two prices, not on which came first; gross is (90 - 100) x 1,100 = -11,000
-    assert charges(buy_price=90, sell_price=100, quantity=1100, position_type="SHORT") == (303.04, -11303.04)
+def test_a_short_is_charged_on_its_real_legs():
+    # callers pass the ENTRY as buy_price and the EXIT as sell_price whatever the side (net_pl relies on it), and a short is
+    # sold first. Sold at 100, bought back at 90: the same two fills as the long above, so the same charges (STT on the 100
+    # it sold, stamp duty on the 90 it bought); gross is (100 - 90) x 1,100 = +11,000
+    assert charges(buy_price=100, sell_price=90, quantity=1100, position_type="SHORT") == (303.04, 10696.96)
+
+
+def test_a_losing_short_pays_stt_on_the_premium_it_sold():
+    # 17 lots of 65 (1,105), sold at 85.5, bought back at 95.05. sold 94,477.50 | bought 105,030.25 | turnover 199,507.75
+    # brokerage 40 | SEBI 0.20 | exchange 70.89 | STT 142 (94,477.50 x 0.15%) | stamp 3.15 (105,030.25 x 0.003%) | GST 20.00
+    # -> 276.24; gross is (85.5 - 95.05) x 1,105 = -10,552.75. STT on the 105,030.25 bought back would make it 291.92.
+    assert charges(buy_price=85.5, sell_price=95.05, quantity=1105, position_type="SHORT") == (276.24, -10828.99)
+
+
+@pytest.mark.parametrize("kwargs", [dict(market_type="options"), dict(market_type="futures"), dict(market_type="equity", exchange="NSE")])
+def test_a_short_costs_what_the_same_fills_cost_as_real_legs(kwargs):
+    # the OMS prices a manual exit by its real legs (buy = the exit, sell = the entry) on the default LONG side, while
+    # strategies pass entry/exit with SHORT: the same two fills have to come out the same, charges and net
+    as_short = charges(buy_price=120, sell_price=95, quantity=300, position_type="SHORT", **kwargs)
+    as_real_legs = charges(buy_price=95, sell_price=120, quantity=300, **kwargs)
+    assert as_short == as_real_legs
 
 
 # ---- futures: one Nifty lot (75) bought at 22,000, sold at 22,100
