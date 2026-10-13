@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.7.4] - 2026-10-13
+
 ### Fixed
 - `calculate_brokerage`, India: a SHORT position was charged with its legs swapped. Callers pass the entry as `buy_price`
   and the exit as `sell_price` whatever the side (`net_pl` relies on it), but STT, which falls on the sale, and stamp duty,
