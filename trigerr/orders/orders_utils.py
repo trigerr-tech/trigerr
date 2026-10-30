@@ -140,6 +140,14 @@ def check_open_orders(orders_list):
         return {}
 
 
+def capital_used(order, market_type):
+    """ What an entry order really put to work: its position value over its leverage. `quantity` counts units for spot and
+    futures and lots for everything else, the same rule convert_to_trades prices the P&L with. The order carries the
+    `leverage` it was sized with (1 when it carries none); a market with another way of tying up money passes its own. """
+    units = order["quantity"] if market_type in ("spot", "futures") else order["quantity"] * order["lot_size"]
+    return round(order["trigger_price"] * units / (order.get("leverage") or 1), 2)
+
+
 def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker, holding_type="intraday"):
     """Function to convert Orders to Trades """
     try:
@@ -163,7 +171,8 @@ def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker,
                 trade_dict["entry_time"] = order["order_timestamp"]
                 trade_dict["entry_price"] = order["trigger_price"]
                 trade_dict["quantity"] = order["quantity"]
-                trade_dict["investment"] = order["investment"]
+                trade_dict["investment"] = order["investment"]  # the capital set aside for the trade
+                trade_dict["capital_used"] = capital_used(order, market_type)  # what it really put to work
                 trade_dict["day"] = order.get("day", "")
                 trade_dict["expiry"] = order.get("expiry", "")
                 trade_dict["pnl"] = 0

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `convert_to_trades`: every trade now carries `capital_used`, what its entry really put to work, next to `investment`,
+  the capital set aside for it (always a little more, since only whole lots are bought). It is the position value over the
+  order's `leverage` (1 when the order carries none): `quantity` counts units for spot and futures and lots for everything
+  else, the same rule the P&L is priced with. A strategy that sizes with leverage should put `leverage` in its order
+  params. New helper `orders_utils.capital_used(order, market_type)`. Dashboards and backends read the saved figure
+  instead of working it out from the price, which was only right for options.
+
 ---
 
 ## [0.7.4] - 2026-10-13
