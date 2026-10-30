@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.7.5] - 2026-10-30
+
 ### Added
 - `convert_to_trades`: every trade now carries `capital_used`, what its entry really put to work, next to `investment`,
   the capital set aside for it (always a little more, since only whole lots are bought). It is the position value over the
