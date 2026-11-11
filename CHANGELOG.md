@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Live order calls to the OMS carry a time limit (120 s to place, 60 s for the rest, the funds read included); a stuck
+  connection used to hold a strategy mid-order with no end.
+- A placement that got no answer (a timeout, or a 5xx from the proxy while the OMS restarts) is resent under the same
+  idempotency key, and while the OMS answers that the first send is still in progress the same key is asked again (150 s
+  at most) for its result.
+- `poll_order_status` keeps waiting when a status call gets no answer; it used to return "failed" while the order could
+  still fill at the broker.
+
 ---
 
 ## [0.7.5] - 2026-10-30

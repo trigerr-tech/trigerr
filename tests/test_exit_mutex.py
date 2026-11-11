@@ -159,8 +159,9 @@ def test_an_exit_poll_longer_than_the_ttl_keeps_the_mutex_held(monkeypatch):
     open_polls = {"n": 300}
     seen_free = []
 
-    def fake_post(url, json, headers):
+    def fake_post(url, json, headers, timeout):
         response = type("R", (), {})()
+        response.status_code = 200
         status = "OPEN" if open_polls["n"] > 0 else "COMPLETED"
         open_polls["n"] -= 1
         response.json = lambda: {"status": status, "timestamp": "2026-09-28 10:00:00", "average_price": 100.0}

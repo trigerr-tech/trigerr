@@ -10,6 +10,26 @@ import time
 import uuid
 orders_url = config.get("orders_url")
 
+# (connect, read) seconds. Placing waits on the OMS rate limit and on one broker call per piece of a split order.
+PLACE_TIMEOUT = (5, 120)
+CALL_TIMEOUT = (5, 60)
+# How long a resent placement waits for the first send, still running in the OMS, to finish.
+IN_PROGRESS_WAIT_S = 150
+
+
+def post_to_oms(path, body, timeout=CALL_TIMEOUT):
+    """ One POST to the OMS, parsed. Raises requests.RequestException when the OMS itself gave no answer: a transport
+    error, a timeout, or a 5xx (the proxy in front of it while it restarts). """
+    response = requests.post(url=urljoin(orders_url, path), json=body, headers=get_auth_headers(), timeout=timeout)
+    if response.status_code >= 500:
+        raise requests.HTTPError(f"{path}: HTTP {response.status_code}")
+    return response.json()
+
+
+def placement_in_progress(reply):
+    """ The OMS's answer to a resent placement whose first send it is still working on. """
+    return reply.get("status") == "ERROR" and "still in progress" in str(reply.get("message"))
+
 
 def place_lt_order(symbol, exchange="NSE", quantity=1, transaction_type="BUY", order_type="MARKET", lot_size=1,
                    credential_id=None, trigger_price=None, order_price=None, validity="DAY", asset_type="EQUITY",
@@ -191,9 +211,12 @@ def place_live_order(credential_id, order_details, request_id=None, user_id=None
     """Function to place live trade order via REST API.
 
     One idempotency key per call (a fresh one unless the caller passes its
-    own), resent unchanged only when the HTTP call itself fails: if the OMS
-    placed the order but the response was lost, the retry gets the original
-    result back instead of a second order. A new call always gets a new key --
+    own), resent unchanged only when the HTTP call itself fails (no answer
+    in time, or a 5xx): if the OMS placed the order but the response was
+    lost, the retry gets the original result back instead of a second order.
+    While the OMS says the first send is still running, the same key is
+    asked again (for IN_PROGRESS_WAIT_S at most) until its result is there.
+    A new call always gets a new key --
     the OMS keeps an ERROR result under its key for 24h, so reusing a key
     across calls would block every later retry of a rejected order. """
     try:
@@ -203,18 +226,25 @@ def place_live_order(credential_id, order_details, request_id=None, user_id=None
         request_dict = _add_correlation_fields(request_dict, request_id, user_id, strategy_id)
         print(f"request_dict : {request_dict}")
 
-        for attempt in range(transport_retries + 1):
+        failed_sends = 0
+        deadline = time.monotonic() + IN_PROGRESS_WAIT_S
+        while True:
             try:
-                response = requests.post(url=urljoin(orders_url, "place_order"), json=request_dict, headers=get_auth_headers())
-                break
+                reply = post_to_oms("place_order", request_dict, PLACE_TIMEOUT)
             except requests.RequestException as e:
-                if attempt == transport_retries:
+                if failed_sends == transport_retries:
                     raise
+                failed_sends += 1
                 print(f"place_order transport error, retrying with the same idempotency key : {e}")
                 time.sleep(retry_sleep)
+                continue
+            if placement_in_progress(reply) and time.monotonic() < deadline:
+                time.sleep(retry_sleep)
+                continue
+            break
         print("******** Order Placement Response *********")
-        print(response.json())
-        return response.json()
+        print(reply)
+        return reply
     except Exception as e:
         print(f"Exception in placing live trade order : {e}")
         return None
@@ -229,10 +259,10 @@ def modify_live_order(credential_id, order_details, request_id=None, user_id=Non
             request_id, user_id, strategy_id)
         print(f"request_dict : {request_dict}")
 
-        response = requests.post(url=urljoin(orders_url, "modify_order"), json=request_dict, headers=get_auth_headers())
+        reply = post_to_oms("modify_order", request_dict)
         print("******** Order Placement Response *********")
-        print(response.json())
-        return response.json()
+        print(reply)
+        return reply
     except Exception as e:
         print(f"Exception in Modify Live Order : {e}")
         pass
@@ -252,7 +282,7 @@ def check_order_status(credential_id, order_id, exchange, request_id=None, user_
             },
             request_id, user_id, strategy_id)
         # last_order = requests.post(url=orders_url+"get_order_by_id", params={"credential_id": credential_id, 'order_details': json.dumps(get_order_params)}).json()
-        last_order = requests.post(url=urljoin(orders_url, "check_order_status"), json=request_dict, headers=get_auth_headers()).json()
+        last_order = post_to_oms("check_order_status", request_dict)
         print(f"order_status_response : {last_order}")
 
         if last_order["status"] == "COMPLETED":
@@ -286,7 +316,16 @@ def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, 
         retry_count = 0
 
         while time.time() - start_time < max_wait_seconds:  # Poll indefinitely until terminal state
-            order_response = requests.post(url=urljoin(orders_url, "check_order_status"), json=request_dict, headers=get_auth_headers()).json()
+            try:
+                order_response = post_to_oms("check_order_status", request_dict)
+            except requests.RequestException as e:
+                # No answer says nothing about the order, which may be filling at the broker: keep asking.
+                print(f"Poll #{retry_count} | no answer from the OMS, asking again : {e}")
+                if on_wait:
+                    on_wait()
+                retry_count += 1
+                time.sleep(sleep_interval)
+                continue
 
             current_status = order_response.get("status")
 
@@ -339,9 +378,7 @@ def validate_credential(credential_id):
     Returns (status, message) — status is "success" or "error"."""
     try:
         print(f"Validating broker credential: {credential_id}")
-        response = requests.post(url=urljoin(orders_url, "validate_broker_credentials"),
-                                 json={"credential_id": str(credential_id)},
-                                 headers=get_auth_headers()).json()
+        response = post_to_oms("validate_broker_credentials", {"credential_id": str(credential_id)})
         if response.get("status") == "SUCCESS":
             return "success", response.get("message")
         return "error", response.get("message")

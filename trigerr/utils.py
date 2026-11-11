@@ -1433,7 +1433,7 @@ def fetch_available_funds(credential_id):
     """Function to fetch current available funds in the account"""
     try:
         print(f"***** Fetching Available Funds for : {credential_id} *****")
-        response = requests.post(urljoin(orders_url, "get_broker_fund"), json={"credential_id": credential_id}, headers=get_auth_headers())
+        response = requests.post(urljoin(orders_url, "get_broker_fund"), json={"credential_id": credential_id}, headers=get_auth_headers(), timeout=(5, 60))
         response_dict = response.json()
         if response_dict["status"] == "SUCCESS" and response_dict["message"] == "Fund Found":
             fund_available = response_dict["data"]["net_balance"]

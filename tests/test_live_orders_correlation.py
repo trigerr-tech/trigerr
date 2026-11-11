@@ -6,6 +6,7 @@ from trigerr.orders import live
 
 def _mock_response(payload):
     response = MagicMock()
+    response.status_code = 200
     response.json.return_value = payload
     return response
 
