@@ -1,4 +1,4 @@
-from trigerr.orders import add_order_to_redis, fetch_orders_list
+from trigerr.orders import add_order_to_redis, fetch_orders_list, insert_record, push_to_list
 from trigerr.utils import send_order_alert
 from trigerr.config import config, get_auth_headers
 from trigerr_logging import get_context
@@ -81,7 +81,10 @@ def save_lt_order(app_db_cursor, redis_cursor, orders_list, symbol, quantity, qu
                   order_id=None, broker_response=None, sl_order_id=None, validity="DAY", market="IN", holding_type="INTRADAY",
                   asset_type="EQUITY", option_type=None, strike_price=None, underlying=None, expiry_date=None, max_qpo=None,
                   data_key=None, venue=None, group_id=None, leg_key=None, broker=None, broker_symbol=None):
-    """ Function to save order in Database """
+    """ Function to save order in Database. Returns (status, orders_list):
+    "success"   - the order is in Mongo and in the request's Redis orders list;
+    "db_failed" - it is in the Redis list, so the trading loop knows the position, but Mongo did not take it;
+    "failed"    - it is not in the Redis list: the trading loop does not know this order. """
     try:
         order_dict = {
             "market": market,
@@ -142,18 +145,22 @@ def save_lt_order(app_db_cursor, redis_cursor, orders_list, symbol, quantity, qu
         lt_order_dict["trade_action"] = lt_order_dict["trade_action"]
 
         # Saving Order Details to Database
-        lt_order_id = app_db_cursor["lt_orders"].insert_one(lt_order_dict).inserted_id
-        lt_order_dict["db_order_id"] = lt_order_id
-        order_dict["db_order_id"] = lt_order_id
+        lt_order_id = insert_record(app_db_cursor["lt_orders"], lt_order_dict)
+        if lt_order_id is not None:
+            lt_order_dict["db_order_id"] = lt_order_id
+            order_dict["db_order_id"] = lt_order_id
 
         # Converting Dict to String
         redis_dict = {k: str(v) if not isinstance(v, (int, float)) else v for k, v in order_dict.items()}
 
-        # redis_dict["quantity_left"] = str(quantity_left)
-
         # Adding Order to Redis
-        add_order_to_redis(redis_cursor=redis_cursor, request_id=str(request_id), order_dict=redis_dict, mode="lt")
+        if not add_order_to_redis(redis_cursor=redis_cursor, request_id=str(request_id), order_dict=redis_dict, mode="lt"):
+            return "failed", orders_list
+    except Exception as e:
+        print(f"Exception in Saving Order in DB : {e}")
+        return "failed", orders_list
 
+    try:
         # Creating Alert Dict
         alert_dict = {"user_id": str(order_dict["user_id"]),
                       "strategy_id": str(order_dict["strategy_id"]),
@@ -170,30 +177,27 @@ def save_lt_order(app_db_cursor, redis_cursor, orders_list, symbol, quantity, qu
                       }
         print(f"Alert Dict : {alert_dict}")
         send_order_alert(alert_dict)
-
-        orders_list = fetch_orders_list(redis_cursor=redis_cursor, request_id=str(request_id))
-        return "success", orders_list
-
     except Exception as e:
-        print(f"Exception in Saving Order in DB : {e}")
-        return "failed", orders_list
+        print(f"Exception in sending order alert : {e}")
+
+    orders_list = fetch_orders_list(redis_cursor=redis_cursor, request_id=str(request_id))
+    return ("success" if lt_order_id is not None else "db_failed"), orders_list
 
 
 def save_lt_trade(app_db_cursor, redis_cursor, trade_dict):
-    """Function to save order in Database"""
+    """ Function to save a trade in Database. Returns True when it is in Mongo, False when it could not be saved there. """
+    saved = False
     try:
-        app_db_cursor["lt_trades"].insert_one(trade_dict)
+        saved = insert_record(app_db_cursor["lt_trades"], trade_dict) is not None
         request_id = trade_dict["request_id"]
         trades_key = str(request_id) + "_trades"
-        # 20h, matching common_runner.py's LOCK_TTL_S: this list is scoped to
-        # the same request/session, and nothing else expires it otherwise.
-        if redis_cursor.rpush(trades_key, json.dumps(trade_dict, default=str)) == 1:
-            redis_cursor.expire(trades_key, 20 * 60 * 60)
-        redis_cursor.publish(trades_key, json.dumps(trade_dict, default=str))
-        redis_cursor.publish(f"{trade_dict['user_id']}_lt_trades", json.dumps(trade_dict, default=str))
+        payload = json.dumps(trade_dict, default=str)
+        push_to_list(redis_cursor, trades_key, payload, tries=1)
+        redis_cursor.publish(trades_key, payload)
+        redis_cursor.publish(f"{trade_dict['user_id']}_lt_trades", payload)
     except Exception as e:
         print(f"Exception in saving LT trade in DB : {e}")
-        pass
+    return saved
 
 
 def _add_correlation_fields(request_dict, request_id=None, user_id=None, strategy_id=None):

@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `poll_order_status` returns `("partial", order_response)` for the OMS's new `PARTIAL` status (every piece ended, only
   part of the quantity filled). Needs the OMS release that carries `PARTIAL`.
 
+### Changed
+- `save_lt_order` tries the Mongo insert and the Redis write three times each and says where the record is: `"success"`
+  (both), `"db_failed"` (in the request's Redis orders list, not in Mongo) or `"failed"` (not in the Redis list, so the
+  trading loop does not know the order). It used to answer `"success"` when the Redis write had failed, and `"failed"`
+  when only the order alert had. A try whose answer was lost is not saved twice.
+- `save_lt_trade` returns True/False for the Mongo save (it returned nothing) and retries it; the Redis copy is written
+  either way. `add_order_to_redis` returns True/False.
+
 ### Fixed
 - Live order calls to the OMS carry a time limit (120 s to place, 60 s for the rest, the funds read included); a stuck
   connection used to hold a strategy mid-order with no end.

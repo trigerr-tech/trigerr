@@ -5,25 +5,62 @@ import datetime
 import secrets
 import time
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 import requests
 
 orders_url = config.get('orders_url')
 
 
+def insert_record(collection, document, tries=3):
+    """ Insert a document, trying a few times. Returns its id, or None when it could not be saved. pymongo puts the
+    _id on the document at the first try, so a later try cannot save a second copy: a duplicate-key answer means an
+    earlier try, whose answer was lost, did save it. """
+    for attempt in range(tries):
+        try:
+            return collection.insert_one(document).inserted_id
+        except DuplicateKeyError:
+            return document["_id"]
+        except Exception as e:
+            print(f"Exception in saving record, try {attempt + 1} of {tries} : {e}")
+            time.sleep(1)
+    return None
+
+
+def push_to_list(redis_cursor, key, payload, tries=3):
+    """ Append payload to a Redis list, trying a few times. Returns True once it is in the list. A try whose answer
+    was lost may still have reached Redis, so a later try first looks whether the list already ends with it. """
+    for attempt in range(tries):
+        try:
+            if attempt and redis_cursor.lrange(key, -1, -1) in ([payload], [payload.encode()]):
+                return True
+            # 20h, matching common_runner.py's LOCK_TTL_S: this list is scoped to
+            # the same request/session, and nothing else expires it otherwise.
+            if redis_cursor.rpush(key, payload) == 1:
+                redis_cursor.expire(key, 20 * 60 * 60)
+            return True
+        except Exception as e:
+            print(f"Exception in adding to redis list {key}, try {attempt + 1} of {tries} : {e}")
+            time.sleep(1)
+    return False
+
+
 def add_order_to_redis(redis_cursor, request_id, order_dict, mode):
-    """Function to add order to redis"""
+    """ Function to add order to redis. Returns True once the order is in the request's orders list (where the trading
+    loops read their position from), False when it could not be put there. """
     try:
         orders_key = str(request_id) + "_orders"
-        # 20h, matching common_runner.py's LOCK_TTL_S: this list is scoped to
-        # the same request/session, and nothing else expires it otherwise.
-        if redis_cursor.rpush(orders_key, json.dumps(order_dict, default=str)) == 1:
-            redis_cursor.expire(orders_key, 20 * 60 * 60)
-        redis_cursor.publish(orders_key, json.dumps(order_dict, default=str))
-        redis_cursor.publish(f'{str(order_dict["user_id"])}_{mode}_orders', json.dumps(order_dict, default=str))
-        # redis_cursor.publish(str(order_dict["user_id"]) + "_{}".format(mode) + "_orders", json.dumps(order_dict, default=str))
+        payload = json.dumps(order_dict, default=str)
+        if not push_to_list(redis_cursor, orders_key, payload):
+            return False
     except Exception as e:
         print(f"Exception in adding order in redis : {e}")
-        pass
+        return False
+    try:
+        redis_cursor.publish(orders_key, payload)
+        redis_cursor.publish(f'{str(order_dict["user_id"])}_{mode}_orders', payload)
+    except Exception as e:
+        print(f"Exception in publishing order : {e}")
+    return True
 
 
 def fetch_orders_list(redis_cursor, request_id):
