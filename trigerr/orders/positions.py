@@ -262,6 +262,8 @@ def answer(handle, book, orders=(), problems=(), note="", asked=None):
         state = "nothing"
     else:
         state = "done" if filled >= asked else "part"
+    # Why an order ended with nothing, when the order service said why (refused, never reached the broker).
+    note = note or "; ".join(order["note"] for order in orders if order.get("note"))
     return {"state": state, "filled": filled, "price": round(value / filled, 2) if filled else 0.0, "held": held,
             "working_entry": working_lots(book, "ENTRY"), "working_exit": working_lots(book, "EXIT"),
             "record_gap": "db_failed" in problems, "not_recorded": "failed" in problems, "note": note}
