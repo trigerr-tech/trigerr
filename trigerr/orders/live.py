@@ -15,6 +15,10 @@ PLACE_TIMEOUT = (5, 120)
 CALL_TIMEOUT = (5, 60)
 # How long a resent placement waits for the first send, still running in the OMS, to finish.
 IN_PROGRESS_WAIT_S = 150
+# How long an order may stay open before what is still open of it is cancelled (settle_live_order).
+SETTLE_WAIT_S = 60
+# The states in which an order has ended at the broker: nothing more of it can fill.
+ENDED_STATUSES = ("COMPLETED", "PARTIAL", "REJECTED", "CANCELLED")
 
 
 def post_to_oms(path, body, timeout=CALL_TIMEOUT):
@@ -337,6 +341,11 @@ def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, 
                 order_response["timestamp"] = datetime.datetime.strptime(str(order_response["timestamp"]), '%Y-%m-%d %H:%M:%S')
                 return "success", order_response
 
+            elif current_status == "PARTIAL":
+                print(f"Order ended PARTIAL - Filled: {order_response.get('filled_quantity')}/{order_response.get('order_quantity')}")
+                order_response["timestamp"] = datetime.datetime.strptime(str(order_response["timestamp"]), '%Y-%m-%d %H:%M:%S')
+                return "partial", order_response
+
             elif current_status == "REJECTED":
                 print(f"Order REJECTED: {order_response.get('message')}")
                 order_response["timestamp"] = datetime.datetime.strptime(str(order_response["timestamp"]), '%Y-%m-%d %H:%M:%S')
@@ -370,6 +379,71 @@ def poll_order_status(credential_id, order_id, exchange, max_wait_seconds=1800, 
     except Exception as e:
         print(f"Exception in Poll Order Status Function: {e}")
         return "failed", order_response
+
+
+def cancel_live_order(credential_id, order_id, request_id=None, user_id=None, strategy_id=None):
+    """ Ask the OMS to cancel whatever is still open of an order. Returns its reply, or None when the call failed:
+    either way the caller asks for the order's status afterwards, the reply alone settles nothing. """
+    try:
+        request_dict = _add_correlation_fields(
+            {"credential_id": str(credential_id), "order_params": {"order_id": order_id}}, request_id, user_id, strategy_id)
+        reply = post_to_oms("cancel_order", request_dict)
+        print(f"cancel_order_response : {reply}")
+        return reply
+    except Exception as e:
+        print(f"Exception in Cancel Live Order : {e}")
+        return None
+
+
+def placed_order_id(order_response):
+    """ The OMS order id of a place_live_order reply when at least one piece of the order is at the broker, else None.
+    A split order with a piece refused comes back ERROR and still has pieces at the broker. """
+    if not order_response:
+        return None
+    pieces = order_response.get("sub_orders") or []
+    if order_response.get("status") == "SUCCESS" or any(piece.get("status") == "OPEN" for piece in pieces):
+        return order_response.get("order_id") or None
+    return None
+
+
+def filled_lots(order_response, lot_size=1):
+    """ What an order filled, in lots (the unit strategies size in; the OMS counts units). """
+    lots = ((order_response or {}).get("filled_quantity") or 0) / lot_size
+    return int(lots) if lots == int(lots) else round(lots, 2)
+
+
+def wait_for_order_end(credential_id, order_id, exchange, wait_s, on_wait=None):
+    """ Ask about an order until it has ended or wait_s is over. Returns (ended, order_response). An answer that does
+    not say (the OMS could not tell this time) does not end the wait: the order is asked about again. """
+    deadline = time.time() + wait_s
+    order_response = None
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False, order_response
+        status, order_response = poll_order_status(credential_id=credential_id, order_id=order_id, exchange=exchange,
+                                                   max_wait_seconds=remaining, on_wait=on_wait)
+        if order_response and order_response.get("status") in ENDED_STATUSES:
+            return True, order_response
+        if status == "timeout":
+            return False, order_response
+        if on_wait:
+            on_wait()
+        time.sleep(1)
+
+
+def settle_live_order(credential_id, order_id, exchange, wait_s=SETTLE_WAIT_S, on_wait=None):
+    """ Wait for a placed order to end. Not ended after wait_s: cancel what is open and wait once more for it to end.
+
+    Returns (settled, order_response). settled True: the order has ended, and filled_lots(order_response) is what it
+    filled (maybe nothing, maybe part), at order_response["average_price"]. settled False: its end is not known (still
+    open after the cancel, or no clear answer) and it may yet fill, so the caller must not treat it as failed, nor place
+    another order for the same quantity, until a later settle_live_order on the same order_id says it has ended. """
+    ended, order_response = wait_for_order_end(credential_id, order_id, exchange, wait_s, on_wait)
+    if not ended:
+        cancel_live_order(credential_id, order_id)
+        ended, order_response = wait_for_order_end(credential_id, order_id, exchange, wait_s, on_wait)
+    return ended, order_response
 
 
 def validate_credential(credential_id):

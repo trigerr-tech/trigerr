@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `settle_live_order`: waits for a placed order to end (60 s), cancels what is still open of it, waits once more, and
+  answers `(settled, order_response)`. An answer from the OMS that does not say does not end the wait. Not settled means
+  the order may yet fill: the caller must not send another for the same quantity until a later call says it has ended.
+- `cancel_live_order` (the SDK had no cancel call), `placed_order_id` (the order id when at least one piece is at the
+  broker, also when the OMS answered ERROR for a refused piece) and `filled_lots`.
+- `poll_order_status` returns `("partial", order_response)` for the OMS's new `PARTIAL` status (every piece ended, only
+  part of the quantity filled). Needs the OMS release that carries `PARTIAL`.
+
 ### Fixed
 - Live order calls to the OMS carry a time limit (120 s to place, 60 s for the rest, the funds read included); a stuck
   connection used to hold a strategy mid-order with no end.
