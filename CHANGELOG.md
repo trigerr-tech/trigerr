@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.7.6] - 2026-11-12
+
 ### Added
 - `trigerr.orders.positions`, the position manager: the one place a live position's orders are sent, followed and
   recorded. `open_position`, `reduce_position`, `close_position`, `cancel_working` and `sync_position` each return at
