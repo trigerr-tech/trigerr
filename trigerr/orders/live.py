@@ -405,9 +405,32 @@ def placed_order_id(order_response):
     if not order_response:
         return None
     pieces = order_response.get("sub_orders") or []
-    if order_response.get("status") == "SUCCESS" or any(piece.get("status") == "OPEN" for piece in pieces):
+    if order_response.get("status") == "SUCCESS" or any(piece.get("status") in ("OPEN", "UNKNOWN") for piece in pieces):
         return order_response.get("order_id") or None
     return None
+
+
+def find_live_order(idempotency_key, void=False):
+    """ Ask the OMS what became of a placement by the idempotency key it was sent under, for a placement whose answer never
+    came. Returns the OMS's data: {"found": "none" | "in_progress" | "placed" | "unknown", "order": ...}, or None when the
+    question itself got no answer. void=True closes a key that never arrived, so a placement still on its way in under it
+    is refused: only then is "none" final. Places nothing. """
+    try:
+        reply = post_to_oms("find_order", {"idempotency_key": idempotency_key, "void": void})
+        return reply.get("data") if reply.get("status") == "SUCCESS" else None
+    except Exception as e:
+        print(f"Exception in Find Live Order : {e}")
+        return None
+
+
+def order_status_now(credential_id, order_id, exchange):
+    """ One look at an order's status: the OMS's answer as it is, or None when there was none. No waiting, no retry. """
+    try:
+        return post_to_oms("check_order_status", _add_correlation_fields(
+            {"credential_id": str(credential_id), "order_params": {"order_id": order_id, "exchange": exchange}}))
+    except Exception as e:
+        print(f"Exception in Order Status Now : {e}")
+        return None
 
 
 def filled_lots(order_response, lot_size=1):

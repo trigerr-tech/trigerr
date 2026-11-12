@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `trigerr.orders.positions`, the position manager: the one place a live position's orders are sent, followed and
+  recorded. `open_position`, `reduce_position`, `close_position`, `cancel_working` and `sync_position` each return at
+  once with what happened (done, part, nothing, working, unknown, busy). Each order's key is written to the position's
+  book in the state Redis before it is sent; an exit is never sent for more than what is held less the exits not yet
+  recorded, and an order whose result is not known counts in full. Live only; no strategy uses it yet.
+- `find_live_order` (what became of a placement, by its idempotency key) and `order_status_now` (one look at an order).
+  `placed_order_id` also counts a piece the OMS reports as `UNKNOWN`. Need the OMS release with `/find_order`.
 - `settle_live_order`: waits for a placed order to end (60 s), cancels what is still open of it, waits once more, and
   answers `(settled, order_response)`. An answer from the OMS that does not say does not end the wait. Not settled means
   the order may yet fill: the caller must not send another for the same quantity until a later call says it has ended.
