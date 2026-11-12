@@ -204,7 +204,7 @@ def place_entry_order_for_leg(ctx, leg):
             credential_id=ctx["credential_id"], validity=inputs.get("order_validity", "DAY"),
             asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
             option_type=leg.get("option_type"), strike_price=leg.get("strike_price"), underlying=ctx["underlying"],
-            max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
+            max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"], trade_action="ENTRY")
         if order_status != "success":
             _alert(ctx, f"Error placing entry order for {leg['leg_key']}: {lt_response}", "Live Order Error")
             return False
@@ -365,7 +365,7 @@ def _unwind_filled_legs(ctx, filled_legs):
                     asset_type=ctx["parameters"].get("asset_type", "OPTIONS"),
                     holding_type=ctx["parameters"].get("holding_type", "INTRADAY"),
                     option_type=leg.get("option_type"), strike_price=leg.get("strike_price"),
-                    underlying=ctx["underlying"], max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
+                    underlying=ctx["underlying"], max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"], trade_action="EXIT")
                 if unwind_status != "success":
                     msg = (f"Unwound {leg['leg_key']} ({leg['tradingsymbol']}) after a sibling leg failed: "
                           f"{unwind_status} | {unwind_response}. Verify positions manually.")
@@ -615,7 +615,7 @@ def place_exit_order_for_leg(ctx, leg, exit_type, candle):
             credential_id=ctx["credential_id"], validity=inputs.get("order_validity", "DAY"),
             asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
             option_type=leg.get("option_type"), strike_price=leg.get("strike_price"), underlying=ctx["underlying"],
-            max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
+            max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"], trade_action="EXIT")
         if order_status != "success":
             _alert(ctx, f"Error placing exit order for {leg['leg_key']}: {lt_response}", "Live Order Error")
             return
@@ -712,7 +712,7 @@ def manual_exit_legs(ctx, prices, leg_keys=None):
                 credential_id=ctx["credential_id"], validity=inputs.get("order_validity", "DAY"),
                 asset_type=inputs.get("asset_type", "OPTIONS"), holding_type=inputs.get("holding_type", "INTRADAY"),
                 option_type=leg.get("option_type"), strike_price=leg.get("strike_price"), underlying=ctx["underlying"],
-                max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"])
+                max_qpo=ctx["symbols_dict"].get("max_qpo"), venue=ctx["venue"], trade_action="EXIT")
             if order_status != "success":
                 _alert(ctx, f"Error placing manual exit order for {leg_key}: {lt_response}", "Manual Exit Order Error")
                 refused[leg_key] = f"order placement failed: {lt_response}"

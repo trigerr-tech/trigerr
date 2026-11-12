@@ -38,8 +38,9 @@ def placement_in_progress(reply):
 def place_lt_order(symbol, exchange="NSE", quantity=1, transaction_type="BUY", order_type="MARKET", lot_size=1,
                    credential_id=None, trigger_price=None, order_price=None, validity="DAY", asset_type="EQUITY",
                    holding_type="DELIVERY", option_type=None, strike_price=None, underlying=None, expiry_date=None, max_qpo=None,
-                   venue=None, idempotency_key=None):
-    """ Function to Place Live Trading Order """
+                   venue=None, idempotency_key=None, trade_action=None):
+    """ Function to Place Live Trading Order. trade_action ("ENTRY" or "EXIT") tells the order service's risk engine what
+    the caller means the order to be; it is never sent to a broker, and an older order service ignores it. """
     try:
         order_data_params = {"symbol": symbol,
                              "exchange": exchange,
@@ -60,6 +61,8 @@ def place_lt_order(symbol, exchange="NSE", quantity=1, transaction_type="BUY", o
                              }
         if venue is not None:
             order_data_params["venue"] = venue
+        if trade_action is not None:
+            order_data_params["trade_action"] = trade_action
 
         order_response = place_live_order(credential_id=credential_id, order_details=order_data_params,
                                           idempotency_key=idempotency_key)

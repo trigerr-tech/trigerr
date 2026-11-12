@@ -7,6 +7,7 @@ Skipped when the order service is not checked out beside this repo. """
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,11 @@ def oms():
     from brokers import broker_dhan
     from fastapi.testclient import TestClient
     from test_idempotency import FakeAsyncRedis
+    if hasattr(api, "order_ledger"):
+        # The order ledger writes to Mongo from a background thread, and there is no Mongo here. Left on, its first
+        # write wakes pymongo's own helper threads, which call time.sleep in a loop: with sleep replaced by the test
+        # clock below, they make that clock run away.
+        api.order_ledger.stop()
     return {"api": api, "order_utils": order_utils, "roundtrip": roundtrip, "broker_dhan": broker_dhan, "instruments": instruments,
             "fernet": encrypted_docs.FERNET, "encrypted": encrypted_docs.encrypted, "TestClient": TestClient, "FakeAsyncRedis": FakeAsyncRedis}
 
@@ -133,7 +139,12 @@ def world(oms, monkeypatch):
             raise requests.ConnectionError("no answer")
         return Reply(client.post(path, json=json))
 
+    real_sleep = live.time.sleep
+
     def tick(seconds=1):
+        # pymongo's helper threads sleep in a loop; they must not turn this test's clock.
+        if threading.current_thread().name.startswith("pymongo"):
+            return real_sleep(seconds)
         w.clock += seconds
 
     monkeypatch.setattr(live, "orders_url", "http://oms/")
@@ -335,3 +346,62 @@ def test_a_request_is_busy_while_another_actor_holds_the_lock(world, monkeypatch
     world.state.set(f"{REQUEST_ID}:exit_mutex", "someone-else")
     monkeypatch.setattr(positions, "acquire_exit_mutex", lambda cursor, request_id: None)
     assert positions.close_position(world.position, "SL")["state"] == "busy" and len(world.dhan.orders) == 1
+
+
+# ------------------------------------------------------------------------------------- with the risk engine enforcing
+
+@pytest.fixture
+def guarded(world, oms, monkeypatch):
+    """ The same world, with the order service's risk engine switched to enforce and a Redis it can keep its book in.
+    Skipped against an order service checkout that has no risk engine yet. """
+    api = oms["api"]
+    if not hasattr(api, "risk_check"):
+        pytest.skip("this trigerr-orders-api checkout has no risk engine")
+    from hash_redis import HashRedis
+    monkeypatch.setattr(api, "state_redis", HashRedis())
+    monkeypatch.setattr(api, "risk_mode", "enforce")
+    monkeypatch.setattr(api, "risk_platform_contract_cap", None)
+    monkeypatch.setattr(api, "risk_limits_default", {"max_order_value": 40_000, "max_open_value": 40_000, "max_daily_loss": 5_000,
+                                                     "max_entries_per_day": 2})
+    monkeypatch.setattr(api, "last_traded_price", lambda market, venue, symbol: 100.0)
+    world.sent = []
+    post = live.requests.post
+
+    def recording(url, json=None, headers=None, timeout=None):
+        if url.endswith("/place_order"):
+            world.sent.append(json["order_params"].get("trade_action"))
+        return post(url, json=json, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(live.requests, "post", recording)
+    return world
+
+
+def test_the_manager_tells_the_order_service_entry_or_exit(guarded):
+    opened(guarded)
+    assert positions.close_position(guarded.position, "SL")["state"] == "done"
+    assert guarded.sent == ["ENTRY", "EXIT"]
+
+
+def test_an_entry_the_risk_engine_refuses_holds_nothing_and_reaches_no_broker(guarded):
+    result = positions.open_position(guarded.position, 6)          # 6 lots x 75 x 100 = 45,000 > 40,000
+    assert (result["state"], result["held"]) == ("nothing", 0)
+    assert guarded.dhan.orders == {} and guarded.lines() == [] and guarded.book() == []
+
+
+def test_a_full_trade_passes_and_the_exit_goes_out_though_the_account_is_then_reduce_only(guarded, oms):
+    import asyncio
+    api = oms["api"]
+    opened(guarded)
+    asyncio.run(api.risk_engine.write_state(api.state_redis, oms["roundtrip"].CRED_ID, "reduce_only", "admin", "test", guarded.clock))
+    assert positions.close_position(guarded.position, "SL")["state"] == "done"
+    assert guarded.exits() == [("SL", 4, 0)]
+    again = positions.open_position(guarded.position, 1)
+    assert again["state"] == "nothing" and len(guarded.dhan.orders) == 2
+
+
+def test_a_run_may_not_enter_more_often_than_its_limit(guarded):
+    for round_number in range(2):
+        opened(guarded, lots=1)
+        assert positions.close_position(guarded.position, "SL")["state"] == "done"
+    third = positions.open_position(guarded.position, 1)
+    assert third["state"] == "nothing" and len(guarded.dhan.orders) == 4

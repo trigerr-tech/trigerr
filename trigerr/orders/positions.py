@@ -115,7 +115,8 @@ def send_order(handle, book, side, reason, lots, order_type, price):
         order_status, reply = live.place_lt_order(symbol=handle["symbol"], exchange=handle["exchange"], quantity=lots,
                                                   transaction_type=sides[handle["position_type"]], order_type=order_type,
                                                   lot_size=handle["lot_size"], credential_id=handle["credential_id"],
-                                                  order_price=price, idempotency_key=order["key"], **handle["order_fields"])
+                                                  order_price=price, idempotency_key=order["key"], trade_action=side,
+                                                  **handle["order_fields"])
     except Exception as e:
         order_status, reply = "failed", None
         print(f"Exception in placing order {order['key']} : {e}")
