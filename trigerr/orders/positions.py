@@ -35,6 +35,8 @@ REQUEST_WAIT_S = 10
 MARKET_PATIENCE_S = 60
 # After a part fill an exit is sent again for the rest, this many orders at most per request.
 EXIT_ORDERS_PER_REQUEST = 3
+# How long a request looks at a protective stop it has just placed, to see whether the broker took it or refused it.
+STOP_LOOK_S = 3
 # An order whose result has been unknown this long is reported as needing a person.
 ATTENTION_AFTER_S = 180
 # A fill that covers only part of the exit it was sent for is recorded under the exit's name plus this: the trade
@@ -103,10 +105,13 @@ def working_lots(book, side):
     return sum(unbooked_lots(order) for order in book["orders"] if order["side"] == side)
 
 
-def send_order(handle, book, side, reason, lots, order_type, price):
-    """ Writes the order's key to the book, then sends it. Whatever the answer, the order is in the book and sync follows it. """
+def send_order(handle, book, side, reason, lots, order_type, price, trigger=None, protect=False):
+    """ Writes the order's key to the book, then sends it. Whatever the answer, the order is in the book and sync follows it.
+    protect marks the position's protective stop: an exit that rests at the broker (see protect_position). """
     order = {"key": uuid.uuid4().hex, "side": side, "reason": reason, "lots": lots, "order_type": order_type, "order_id": None,
              "filled": 0, "price": 0.0, "ended": False, "booked": False, "sent_at": time.time()}
+    if protect:
+        order.update(protect=True, trigger=trigger, limit=price)
     book["orders"].append(order)
     write_book(handle, book)
     tell(handle, "order_planned", key=order["key"], side=side, reason=reason, lots=lots)
@@ -115,7 +120,7 @@ def send_order(handle, book, side, reason, lots, order_type, price):
         order_status, reply = live.place_lt_order(symbol=handle["symbol"], exchange=handle["exchange"], quantity=lots,
                                                   transaction_type=sides[handle["position_type"]], order_type=order_type,
                                                   lot_size=handle["lot_size"], credential_id=handle["credential_id"],
-                                                  order_price=price, idempotency_key=order["key"], trade_action=side,
+                                                  order_price=price, trigger_price=trigger, idempotency_key=order["key"], trade_action=side,
                                                   request_id=handle["request_id"], user_id=handle["record_fields"].get("user_id"),
                                                   strategy_id=handle["record_fields"].get("strategy_id"),
                                                   **handle["order_fields"])
@@ -170,6 +175,11 @@ def book_ended_orders(handle, book):
         if order["booked"] or not order["ended"]:
             continue
         if order["filled"] <= 0:
+            if order.get("protect") and not order.get("cancel_asked"):
+                # Nobody here cancelled it: the broker or the exchange ended it (refused when placed, or thrown out when
+                # it triggered because its limit was outside the allowed range). The position has no stop at the broker.
+                problems.append("protection_lost")
+                tell(handle, "protection_lost", key=order["key"], order_id=order["order_id"], note=order.get("note") or "")
             order.update(booked=True, reply=None)
             continue
         held, orders_list = held_lots(handle)
@@ -250,6 +260,9 @@ def answer(handle, book, orders=(), problems=(), note="", asked=None):
     filled / price - lots the request's orders filled and their average price
     held           - lots the orders list says are held now
     working_entry / working_exit - lots of orders not yet in the orders list (counted in full while unknown)
+    protected      - lots covered by the protective stop resting at the broker (not counted in working_exit)
+    protection_lost - the protective stop ended without filling and nobody here cancelled it: the position has no stop
+                     at the broker now
     record_gap     - a fill is in the orders list but not in Mongo
     not_recorded   - a fill could not be put in the orders list; it is counted as working and tried again on every sync """
     held, _ = held_lots(handle)
@@ -257,7 +270,8 @@ def answer(handle, book, orders=(), problems=(), note="", asked=None):
     # A request that sent several orders (the rest again after a part fill) asked once, for what its first order asked.
     asked = asked if asked is not None else sum(order["lots"] for order in orders)
     value = sum(order["filled"] * (order["price"] or 0) for order in orders)
-    open_orders = [order for order in book["orders"] if not order["ended"]]
+    # The protective stop is meant to rest at the broker: it is not "an order that has not ended yet".
+    open_orders = [order for order in book["orders"] if not order["ended"] and not order.get("protect")]
     stuck = [order for order in open_orders if time.time() - order["sent_at"] >= ATTENTION_AFTER_S]
     if any(not order["ended"] for order in orders) or (not orders and open_orders):
         state = "unknown" if stuck else "working"
@@ -267,8 +281,11 @@ def answer(handle, book, orders=(), problems=(), note="", asked=None):
         state = "done" if filled >= asked else "part"
     # Why an order ended with nothing, when the order service said why (refused, never reached the broker).
     note = note or "; ".join(order["note"] for order in orders if order.get("note"))
+    resting = resting_stops(book)
     return {"state": state, "filled": filled, "price": round(value / filled, 2) if filled else 0.0, "held": held,
-            "working_entry": working_lots(book, "ENTRY"), "working_exit": working_lots(book, "EXIT"),
+            "working_entry": working_lots(book, "ENTRY"),
+            "working_exit": working_lots(book, "EXIT") - sum(order["lots"] for order in resting),
+            "protected": sum(order["lots"] for order in resting), "protection_lost": "protection_lost" in problems,
             "record_gap": "db_failed" in problems, "not_recorded": "failed" in problems, "note": note}
 
 
@@ -291,6 +308,7 @@ def locked(handle, action):
     token = acquire_exit_mutex(handle["state_cursor"], handle["request_id"])
     if token is None:
         return {"state": "busy", "filled": 0, "price": 0.0, "held": None, "working_entry": None, "working_exit": None,
+                "protected": None, "protection_lost": False,
                 "record_gap": False, "not_recorded": False, "note": "another actor holds this request's lock"}
     try:
         return action(token)
@@ -335,23 +353,91 @@ def exit_lots(handle, book, lots, reason, wait_s, token, problems):
     return answer(handle, book, orders, problems, note, asked)
 
 
+def resting_stops(book):
+    return [order for order in book["orders"] if order.get("protect") and not order["ended"]]
+
+
 def reduce_position(handle, lots, reason, wait_s=REQUEST_WAIT_S):
-    """ Exits `lots` under `reason` (the exit_type of the line), or as many of them as are free. """
+    """ Exits `lots` under `reason` (the exit_type of the line), or as many of them as are free. A protective stop is
+    taken off first (it covers the lots to be exited) and put back, at the same prices, for what is still held. """
     def action(token):
         book = read_book(handle)
         problems = bring_up_to_date(handle, book)
-        return exit_lots(handle, book, lots, reason, wait_s, token, problems)
+        stops = resting_stops(book)
+        if stops:
+            cancel_open_orders(handle, book, ("EXIT",), wait_s, token, only=stops)
+            problems += bring_up_to_date(handle, book)
+        result = exit_lots(handle, book, lots, reason, wait_s, token, problems)
+        if stops:
+            place_stop(handle, book, stops[-1]["reason"], stops[-1]["trigger"], stops[-1]["limit"], wait_s, token)
+            result = dict(answer(handle, book, problems=bring_up_to_date(handle, book)),
+                          **{key: result[key] for key in ("state", "filled", "price", "note", "record_gap", "not_recorded")})
+        return result
     return locked(handle, action)
 
 
-def cancel_open_orders(handle, book, side, wait_s, token):
-    orders = [order for order in book["orders"] if not order["ended"] and order["side"] in side]
+def cancel_open_orders(handle, book, side, wait_s, token, only=None):
+    orders = [order for order in book["orders"] if not order["ended"] and order["side"] in side and (only is None or order in only)]
     for order in orders:
+        order["cancel_asked"] = True
         if order["order_id"]:
             tell(handle, "cancel_sent", key=order["key"], order_id=order["order_id"])
             live.cancel_live_order(handle["credential_id"], order["order_id"])
     if orders:
         wait_for(handle, book, orders, wait_s, token)
+
+
+def place_stop(handle, book, reason, trigger_price, limit_price, wait_s, token):
+    """ Sends the protective stop for every held lot that no exit order covers yet. Returns the order, or None when there
+    is nothing to protect. """
+    held, _ = held_lots(handle)
+    free = held - working_lots(book, "EXIT")
+    if free <= 0:
+        return None
+    order = send_order(handle, book, "EXIT", reason, free, "STOPLOSS", limit_price, trigger=trigger_price, protect=True)
+    # A stop the broker takes rests there; one it refuses ends at once. A short look is enough to tell the two apart.
+    wait_for(handle, book, [order], min(wait_s, STOP_LOOK_S), token)
+    return order
+
+
+def protect_position(handle, reason, trigger_price, limit_price, wait_s=REQUEST_WAIT_S):
+    """ Keeps one protective stop resting at the broker for all that is held: a stop-limit exit, for the case that this
+    run, its server or the price feed stops. `reason` is the exit_type its fill is recorded under; give the strategy's
+    own stop-loss name, so the trade is closed by it like any other stop.
+
+    It is a second line, not the stop itself. The exchange allows only stop-LIMIT orders on options: in a fast move the
+    price can pass the limit and the stop does not fill, and a stop whose limit is outside the exchange's allowed range
+    at the moment it triggers is thrown out. The answer's protection_lost says when the stop has gone without filling.
+
+    Called again with the same prices it does nothing. With other prices, or after the position has changed size, the
+    old stop is taken off and a new one placed. reduce_position and close_position take the stop off before they exit.
+    For a LONG the trigger must not be below the limit; for a SHORT it must not be above it. """
+    if not trigger_price or not limit_price or trigger_price <= 0 or limit_price <= 0:
+        raise ValueError(f"a protective stop needs a trigger and a limit price above zero, got {trigger_price!r} and {limit_price!r}")
+    if (handle["position_type"] == "LONG" and trigger_price < limit_price) or (handle["position_type"] == "SHORT" and trigger_price > limit_price):
+        raise ValueError(f"for a {handle['position_type']} position the limit ({limit_price}) is on the wrong side of the trigger ({trigger_price})")
+
+    def action(token):
+        book = read_book(handle)
+        problems = bring_up_to_date(handle, book)
+        held, _ = held_lots(handle)
+        stops = resting_stops(book)
+        fits = (len(stops) == 1 and stops[0]["trigger"] == trigger_price and stops[0]["limit"] == limit_price
+                and stops[0]["lots"] == held - (working_lots(book, "EXIT") - stops[0]["lots"]))
+        if fits:
+            return answer(handle, book, problems=problems)
+        if stops:
+            cancel_open_orders(handle, book, ("EXIT",), wait_s, token, only=stops)
+            problems += bring_up_to_date(handle, book)
+        order = place_stop(handle, book, reason, trigger_price, limit_price, wait_s, token)
+        problems += bring_up_to_date(handle, book)
+        result = answer(handle, book, problems=problems)
+        if order is None:
+            result["note"] = "nothing to protect: nothing is held, or exits already sent cover it"
+        elif order["ended"] and order["filled"] <= 0:
+            result["note"] = order.get("note") or "the broker did not take the protective stop"
+        return result
+    return locked(handle, action)
 
 
 def close_position(handle, reason, wait_s=REQUEST_WAIT_S):
@@ -377,12 +463,21 @@ def cancel_working(handle, wait_s=REQUEST_WAIT_S):
 
 
 def sync_position(handle):
-    """ Brings the book up to date and books what has filled. Sends no order. Cheap when nothing is in flight. """
+    """ Brings the book up to date and books what has filled. Sends no order, but takes off a protective stop that covers
+    more than is held (someone else closed or trimmed the position): left resting, it would open a position the other
+    way when it triggers. Cheap when nothing is in flight. """
     if not read_book(handle)["orders"]:
         mark_watched(handle)
         return answer(handle, {"orders": []})
 
     def action(token):
         book = read_book(handle)
-        return answer(handle, book, problems=bring_up_to_date(handle, book))
+        problems = bring_up_to_date(handle, book)
+        stops = resting_stops(book)
+        held, _ = held_lots(handle)
+        if stops and sum(order["lots"] for order in stops) > held:
+            tell(handle, "stop_covers_more_than_held", held=held, covered=sum(order["lots"] for order in stops))
+            cancel_open_orders(handle, book, ("EXIT",), REQUEST_WAIT_S, token, only=stops)
+            problems += bring_up_to_date(handle, book)
+        return answer(handle, book, problems=problems)
     return locked(handle, action)

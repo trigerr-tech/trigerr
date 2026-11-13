@@ -427,3 +427,135 @@ def test_the_order_service_knows_whose_order_it_is_and_whether_the_run_still_wat
     assert seen["positions"][0]["requests"] == [REQUEST_ID] and seen["positions"][0]["held"] == 4 * LOT
     # The run's mark is in the SDK's state Redis; the order service reads the same Redis in production.
     assert positions.WATCH_KEY == api.risk_engine.WATCH_KEY
+
+
+# ----------------------------------------------------------------------------------- the protective stop at the broker
+
+def stop_orders(world):
+    return [order for order in world.dhan.orders.values() if order["orderType"] == "STOP_LOSS"]
+
+
+def protected(world, lots=4):
+    """ An open position of `lots` with its stop resting at the broker: trigger 60, limit 50. """
+    opened(world, lots)
+    world.script = ["open"]
+    result = positions.protect_position(world.position, "SL", 60.0, 50.0)
+    assert result["protected"] == lots, result
+    return result
+
+
+def test_a_protective_stop_rests_at_the_broker_and_is_not_an_order_in_flight(world):
+    result = protected(world)
+    stop, = stop_orders(world)
+    assert (stop["transactionType"], stop["quantity"], stop["triggerPrice"], stop["price"], stop["orderStatus"]) == ("SELL", 4 * LOT, 60.0, 50.0, "PENDING")
+    assert (result["held"], result["working_exit"], result["protection_lost"]) == (4, 0, False)
+    world.tick(3600)                                           # an hour later it still rests, and nobody is told to look
+    later = positions.sync_position(world.position)
+    assert (later["state"], later["protected"], later["working_exit"]) == ("nothing", 4, 0) and world.exits() == []
+
+
+def test_asking_again_with_the_same_prices_places_no_second_stop(world):
+    protected(world)
+    again = positions.protect_position(world.position, "SL", 60.0, 50.0)
+    assert again["protected"] == 4 and len(stop_orders(world)) == 1
+
+
+def test_new_prices_take_the_old_stop_off_and_place_a_new_one(world):
+    protected(world)
+    world.script = ["open"]
+    moved = positions.protect_position(world.position, "SL", 80.0, 70.0)
+    old, new = stop_orders(world)
+    assert moved["protected"] == 4 and old["orderStatus"] == "CANCELLED" and (new["triggerPrice"], new["price"], new["orderStatus"]) == (80.0, 70.0, "PENDING")
+    assert moved["protection_lost"] is False and "protection_lost" not in world.events
+
+
+def test_a_stop_that_fills_by_itself_closes_the_position_under_the_strategys_stop_name(world):
+    protected(world)
+    world.dhan.fill(stop_orders(world)[0]["orderId"], 55.0)
+    result = positions.sync_position(world.position)
+    assert (result["held"], result["protected"], result["protection_lost"]) == (0, 0, False)
+    assert world.exits() == [("SL", 4, 0)] and world.lines()[-1]["trigger_price"] == 55.0 and world.book() == []
+
+
+def test_a_part_exit_takes_the_stop_off_exits_and_puts_it_back_for_what_is_left(world):
+    protected(world)
+    world.script = ["fill", "open"]                            # the exit fills; the new stop rests
+    result = positions.reduce_position(world.position, 1, "T1")
+    old, new = stop_orders(world)
+    assert (result["state"], result["filled"], result["held"], result["protected"], result["working_exit"]) == ("done", 1, 3, 3, 0)
+    assert old["orderStatus"] == "CANCELLED" and (new["quantity"], new["triggerPrice"], new["price"], new["orderStatus"]) == (3 * LOT, 60.0, 50.0, "PENDING")
+    assert world.exits() == [("T1", 1, 3)] and sides(world) == ["BUY", "SELL", "SELL", "SELL"]
+
+
+def sides(world):
+    return [order["transactionType"] for order in world.dhan.orders.values()]
+
+
+def test_closing_takes_the_stop_off_first_and_leaves_none_behind(world):
+    protected(world)
+    result = positions.close_position(world.position, "T1")
+    stop, = stop_orders(world)
+    assert (result["state"], result["held"], result["protected"]) == ("done", 0, 0) and stop["orderStatus"] == "CANCELLED"
+    assert world.exits() == [("T1", 4, 0)] and world.book() == [] and "protection_lost" not in world.events
+
+
+def test_a_stop_that_filled_before_it_could_be_taken_off_is_counted_and_nothing_is_sold_twice(world):
+    """ The stop triggers and fills in the moment the strategy decides to exit. Dhan refuses to cancel a traded order. """
+    protected(world)
+    stop_id = stop_orders(world)[0]["orderId"]
+    world.dhan.fill(stop_id, 55.0)
+    result = positions.close_position(world.position, "T1")
+    assert result["held"] == 0 and world.exits() == [("SL", 4, 0)] and sides(world) == ["BUY", "SELL"]
+
+
+def test_a_stop_the_broker_refuses_is_reported_as_lost_protection(world):
+    opened(world)
+    world.script = ["reject"]
+    result = positions.protect_position(world.position, "SL", 60.0, 50.0)
+    assert result["protected"] == 0 and result["protection_lost"] is True and result["held"] == 4 and "protection_lost" in world.events
+
+
+def test_a_resting_stop_the_exchange_throws_out_is_reported_once_and_the_position_is_still_held(world):
+    protected(world)
+    stop_orders(world)[0]["orderStatus"] = "REJECTED"          # thrown out when it triggered: limit outside the allowed range
+    result = positions.sync_position(world.position)
+    assert (result["held"], result["protected"], result["protection_lost"]) == (4, 0, True) and world.exits() == []
+    assert positions.sync_position(world.position)["protection_lost"] is False and world.events.count("protection_lost") == 1
+
+
+def test_a_stop_left_behind_by_a_position_someone_else_closed_is_taken_off(world):
+    protected(world)
+    entry = world.lines()[0]
+    world.state.lists[f"{REQUEST_ID}_orders"].append(json.dumps(dict(entry, trade_action="EXIT", exit_type="MANUAL", quantity_left=0)))
+    result = positions.sync_position(world.position)
+    assert result["held"] == 0 and result["protected"] == 0 and stop_orders(world)[0]["orderStatus"] == "CANCELLED"
+    assert "stop_covers_more_than_held" in world.events and "protection_lost" not in world.events
+
+
+@pytest.mark.parametrize("trigger, limit", [(50.0, 60.0), (0, 50.0), (60.0, None)])
+def test_a_stop_on_the_wrong_side_or_without_a_price_is_refused_before_anything_is_sent(world, trigger, limit):
+    opened(world)
+    with pytest.raises(ValueError):
+        positions.protect_position(world.position, "SL", trigger, limit)
+    assert stop_orders(world) == []
+
+
+def test_nothing_held_means_nothing_to_protect(world):
+    result = positions.protect_position(world.position, "SL", 60.0, 50.0)
+    assert result["protected"] == 0 and "nothing to protect" in result["note"] and world.dhan.orders == {}
+
+
+def test_with_the_risk_engine_enforcing_the_stop_and_the_exit_after_it_both_go_out(guarded):
+    protected(guarded)
+    guarded.script = ["fill", "open"]
+    assert positions.reduce_position(guarded.position, 2, "T1")["protected"] == 2
+    assert positions.close_position(guarded.position, "SL")["held"] == 0
+    assert guarded.sent == ["ENTRY", "EXIT", "EXIT", "EXIT", "EXIT"] and guarded.exits() == [("T1", 2, 2), ("SL", 2, 0)]
+
+
+def test_the_stop_covers_only_the_lots_no_exit_order_already_covers(world):
+    opened(world)
+    world.script = ["open", "open"]                            # an exit of 2 that is still open, then the stop
+    assert positions.reduce_position(world.position, 2, "T1")["working_exit"] == 2
+    result = positions.protect_position(world.position, "SL", 60.0, 50.0)
+    assert (result["protected"], result["working_exit"]) == (2, 2) and stop_orders(world)[0]["quantity"] == 2 * LOT
