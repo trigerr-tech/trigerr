@@ -405,3 +405,25 @@ def test_a_run_may_not_enter_more_often_than_its_limit(guarded):
         assert positions.close_position(guarded.position, "SL")["state"] == "done"
     third = positions.open_position(guarded.position, 1)
     assert third["state"] == "nothing" and len(guarded.dhan.orders) == 4
+
+
+def test_every_look_at_the_position_marks_the_run_as_watching(world):
+    key = positions.WATCH_KEY.format(request_id=REQUEST_ID)
+    assert key not in world.state.values
+    opened(world)
+    first = world.state.values[key]
+    world.tick(60)
+    positions.sync_position(world.position)
+    assert world.state.values[key] == first + 60
+
+
+def test_the_order_service_knows_whose_order_it_is_and_whether_the_run_still_watches(guarded, oms):
+    api = oms["api"]
+    if not hasattr(api, "risk_compare"):
+        pytest.skip("this trigerr-orders-api checkout has no compare endpoint")
+    opened(guarded)
+    client = oms["TestClient"](api.app)
+    seen = client.get(f"/risk/compare/{oms['roundtrip'].CRED_ID}").json()["data"]
+    assert seen["positions"][0]["requests"] == [REQUEST_ID] and seen["positions"][0]["held"] == 4 * LOT
+    # The run's mark is in the SDK's state Redis; the order service reads the same Redis in production.
+    assert positions.WATCH_KEY == api.risk_engine.WATCH_KEY

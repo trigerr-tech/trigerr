@@ -116,6 +116,8 @@ def send_order(handle, book, side, reason, lots, order_type, price):
                                                   transaction_type=sides[handle["position_type"]], order_type=order_type,
                                                   lot_size=handle["lot_size"], credential_id=handle["credential_id"],
                                                   order_price=price, idempotency_key=order["key"], trade_action=side,
+                                                  request_id=handle["request_id"], user_id=handle["record_fields"].get("user_id"),
+                                                  strategy_id=handle["record_fields"].get("strategy_id"),
                                                   **handle["order_fields"])
     except Exception as e:
         order_status, reply = "failed", None
@@ -270,8 +272,22 @@ def answer(handle, book, orders=(), problems=(), note="", asked=None):
             "record_gap": "db_failed" in problems, "not_recorded": "failed" in problems, "note": note}
 
 
+WATCH_KEY = "position_watch:{request_id}"     # read by the order service for the guard: keep the name in step
+WATCH_KEPT_S = 7 * 24 * 60 * 60
+
+
+def mark_watched(handle):
+    """ Notes that this request's run looked at its position just now. A guard outside the run reads it: a position
+    whose run has stopped looking has nobody watching it. Never breaks the caller. """
+    try:
+        handle["state_cursor"].set(WATCH_KEY.format(request_id=handle["request_id"]), time.time(), ex=WATCH_KEPT_S)
+    except Exception as e:
+        print(f"Exception in mark_watched : {e}")
+
+
 def locked(handle, action):
     """ Runs action(token) holding the request's lock; "busy" when the lock cannot be had. """
+    mark_watched(handle)
     token = acquire_exit_mutex(handle["state_cursor"], handle["request_id"])
     if token is None:
         return {"state": "busy", "filled": 0, "price": 0.0, "held": None, "working_entry": None, "working_exit": None,
@@ -363,6 +379,7 @@ def cancel_working(handle, wait_s=REQUEST_WAIT_S):
 def sync_position(handle):
     """ Brings the book up to date and books what has filled. Sends no order. Cheap when nothing is in flight. """
     if not read_book(handle)["orders"]:
+        mark_watched(handle)
         return answer(handle, {"orders": []})
 
     def action(token):
