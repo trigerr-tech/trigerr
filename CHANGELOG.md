@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.8] - 2026-11-14
+
+### Added
+- `protect_position(handle, reason, trigger_price, limit_price)`: keeps one protective stop-limit exit resting at the
+  broker for all that is held. `reduce_position` takes it off, exits and puts it back for what is left; `close_position`
+  takes it off first. Answers carry `protected` and `protection_lost`. The stop is not counted in `working_exit`.
+- `place_lt_order(request_id=, user_id=, strategy_id=)`: whose order it is, passed on to the order service. The position
+  manager sends them, so the order service's count of entries per run is per run.
+- The position manager marks `position_watch:{request_id}` in the state Redis each time a run looks at its position, for
+  the guard service.
+- `place_lt_order(trade_action=...)`: "ENTRY" or "EXIT", sent with the order for the order service's risk engine. Never
+  sent to a broker; an older order service ignores it. The position manager and the shared execution code send it.
+
+---
+
 ## [0.7.7] - 2026-11-14
 
 ### Fixed
