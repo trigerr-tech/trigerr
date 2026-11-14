@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.7.7] - 2026-11-14
+
 ### Fixed
 - `convert_to_trades` ends a trade on an exit that leaves nothing open (`quantity_left` 0), as well as on an exit named in
   `order_exit_levels`. The lots of a position are split between the targets in whole numbers and the leftover goes to the first
