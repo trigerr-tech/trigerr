@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `convert_to_trades` ends a trade on an exit that leaves nothing open (`quantity_left` 0), as well as on an exit named in
+  `order_exit_levels`. The lots of a position are split between the targets in whole numbers and the leftover goes to the first
+  target, so with few lots (one lot, or a big share at the first target) the first target sells the whole position. That trade
+  was never closed, and the strategies' `convert_to_trades(...)[-1]` raised `IndexError` and lost its record. An exit that carries
+  no `quantity_left` is judged by its name alone, as before. New helper `orders_utils.closes_trade`.
+
 ---
 
 ## [0.7.6] - 2026-11-12

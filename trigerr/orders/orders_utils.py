@@ -185,6 +185,15 @@ def capital_used(order, market_type):
     return round(order["trigger_price"] * units / (order.get("leverage") or 1), 2)
 
 
+def closes_trade(order, order_exit_levels):
+    """ True when this exit order ends its trade: its name is one of the policy's last exits (order_exit_levels), or it leaves nothing
+    open. quantity_left is what check_open_orders reads to say a position is closed, so a target that sells the whole position (the lots
+    split in whole numbers, so with few lots the rest rounds to nothing) ends the trade the way a named last exit does. Naming the last
+    exits alone left such a trade without a record. An order that carries no quantity_left is judged by its name only. """
+    left = order.get("quantity_left")
+    return order["exit_type"] in order_exit_levels or (left is not None and left <= 0)
+
+
 def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker, holding_type="intraday"):
     """Function to convert Orders to Trades """
     try:
@@ -269,7 +278,7 @@ def convert_to_trades(orders_list, market_type, order_exit_levels, mode, broker,
                 else:
                     trade_dict["exit_type"] = order["exit_type"]
 
-                if order["exit_type"] in order_exit_levels:
+                if closes_trade(order, order_exit_levels):
                     trade_dict["exit_time"] = order["order_timestamp"]
                     trade_dict["exit_price"] = order["trigger_price"]
                     tmp_market_type = "equity" if market_type == "spot" else market_type
