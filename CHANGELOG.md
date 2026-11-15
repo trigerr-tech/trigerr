@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.7.8] - 2026-11-14
+## [0.7.8] - 2026-11-15
 
 ### Added
 - `protect_position(handle, reason, trigger_price, limit_price)`: keeps one protective stop-limit exit resting at the
