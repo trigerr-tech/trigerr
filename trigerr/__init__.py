@@ -1,6 +1,6 @@
 from .config import config
 
-__version__ = "0.7.8"
+__version__ = "0.7.9"
 
 
 def set_api_key(key):
