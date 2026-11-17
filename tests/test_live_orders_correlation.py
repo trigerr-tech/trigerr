@@ -184,3 +184,30 @@ def test_poll_order_status_calls_on_wait_once_per_open_poll():
         status, _ = live.poll_order_status("cred-1", "OID1", "NFO", on_wait=lambda: waits.append(1))
     assert status == "success"
     assert len(waits) == 2
+
+
+def test_a_status_look_says_whose_order_it_is_without_a_logging_context():
+    with patch("trigerr.orders.live.requests.post") as mock_post:
+        mock_post.return_value = _mock_response({"status": "OPEN"})
+        live.order_status_now("cred-1", "o1", "NSE", request_id="req-explicit", user_id="user-9", strategy_id="strat-1")
+
+    sent_body = mock_post.call_args.kwargs["json"]
+    assert (sent_body["request_id"], sent_body["user_id"], sent_body["strategy_id"]) == ("req-explicit", "user-9", "strat-1")
+
+
+def test_a_status_look_without_an_owner_still_falls_back_to_the_logging_context():
+    with lu.bound(request_id="req-ctx"):
+        with patch("trigerr.orders.live.requests.post") as mock_post:
+            mock_post.return_value = _mock_response({"status": "OPEN"})
+            live.order_status_now("cred-1", "o1", "NSE")
+
+    assert mock_post.call_args.kwargs["json"]["request_id"] == "req-ctx"
+
+
+def test_a_cancel_says_whose_order_it_is_without_a_logging_context():
+    with patch("trigerr.orders.live.requests.post") as mock_post:
+        mock_post.return_value = _mock_response({"status": "SUCCESS"})
+        live.cancel_live_order("cred-1", "o1", request_id="req-explicit", user_id="user-9", strategy_id="strat-1")
+
+    sent_body = mock_post.call_args.kwargs["json"]
+    assert (sent_body["request_id"], sent_body["user_id"], sent_body["strategy_id"]) == ("req-explicit", "user-9", "strat-1")

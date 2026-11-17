@@ -69,6 +69,14 @@ def tell(handle, name, **details):
         handle["on_event"](name, details)
 
 
+def owner(handle):
+    """ Whose position this is, as every call to the order service carries it. The manager says so itself on each call
+    (place, status, cancel), so the order service's ledger notes of one run can be found by its request id whoever the
+    caller is, with or without a logging context. """
+    return {"request_id": handle["request_id"], "user_id": handle["record_fields"].get("user_id"),
+            "strategy_id": handle["record_fields"].get("strategy_id")}
+
+
 def book_field(handle):
     return f"{handle['group_id']}|{handle['leg_key']}"
 
@@ -156,7 +164,7 @@ def sync_order(handle, order):
             order.update(ended=True, filled=0, note=str(placed.get("message") or "no piece of the order reached the broker"))
             return
         order.update(order_id=order_id, broker=placed.get("broker"), broker_symbol=placed.get("broker_symbol"))
-    reply = live.order_status_now(handle["credential_id"], order["order_id"], handle["exchange"])
+    reply = live.order_status_now(handle["credential_id"], order["order_id"], handle["exchange"], **owner(handle))
     if not reply:
         return
     if reply.get("status") in live.ENDED_STATUSES:
@@ -164,7 +172,7 @@ def sync_order(handle, order):
                      reply=reply)
     elif reply.get("status") == "OPEN" and order["order_type"] == "MARKET" and time.time() - order["sent_at"] >= MARKET_PATIENCE_S:
         tell(handle, "cancel_sent", key=order["key"], order_id=order["order_id"])
-        live.cancel_live_order(handle["credential_id"], order["order_id"])
+        live.cancel_live_order(handle["credential_id"], order["order_id"], **owner(handle))
 
 
 def book_ended_orders(handle, book):
@@ -382,7 +390,7 @@ def cancel_open_orders(handle, book, side, wait_s, token, only=None):
         order["cancel_asked"] = True
         if order["order_id"]:
             tell(handle, "cancel_sent", key=order["key"], order_id=order["order_id"])
-            live.cancel_live_order(handle["credential_id"], order["order_id"])
+            live.cancel_live_order(handle["credential_id"], order["order_id"], **owner(handle))
     if orders:
         wait_for(handle, book, orders, wait_s, token)
 

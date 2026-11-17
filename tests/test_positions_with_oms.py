@@ -559,3 +559,45 @@ def test_the_stop_covers_only_the_lots_no_exit_order_already_covers(world):
     assert positions.reduce_position(world.position, 2, "T1")["working_exit"] == 2
     result = positions.protect_position(world.position, "SL", 60.0, 50.0)
     assert (result["protected"], result["working_exit"]) == (2, 2) and stop_orders(world)[0]["quantity"] == 2 * LOT
+
+
+# ------------------------------------------------------------------------------ every call says whose order it is
+
+def calls_to_oms(world, monkeypatch):
+    """ Every body the manager posts to the order service from now on, as (path, body). """
+    send, seen = live.requests.post, []
+
+    def post(url, json=None, headers=None, timeout=None):
+        seen.append(("/" + url.rsplit("/", 1)[1], json))
+        return send(url, json=json, headers=headers, timeout=timeout)
+    monkeypatch.setattr(live.requests, "post", post)
+    return seen
+
+
+def test_every_place_status_and_cancel_says_whose_order_it_is_with_no_logging_context(world, monkeypatch):
+    import trigerr_logging
+    trigerr_logging.clear_context()
+    seen = calls_to_oms(world, monkeypatch)
+
+    protected(world)                                      # an entry, then a stop resting at the broker
+    assert positions.close_position(world.position, "TARGET")["state"] == "done"      # stop off first, then the exit
+
+    paths = [path for path, body in seen]
+    assert {"/place_order", "/check_order_status", "/cancel_order"} <= set(paths)
+    for path, body in seen:
+        if path in ("/place_order", "/check_order_status", "/cancel_order"):
+            assert (body.get("request_id"), body.get("user_id"), body.get("strategy_id")) == (REQUEST_ID, "u1", "s1"), path
+
+
+def test_a_market_order_cancelled_for_being_open_too_long_says_whose_it_is(world, monkeypatch):
+    import trigerr_logging
+    trigerr_logging.clear_context()
+    world.script = ["open"]
+    positions.open_position(world.position, 2, wait_s=1)
+    seen = calls_to_oms(world, monkeypatch)
+    world.tick(positions.MARKET_PATIENCE_S + 1)
+
+    positions.sync_position(world.position)
+
+    cancels = [body for path, body in seen if path == "/cancel_order"]
+    assert cancels and all(body.get("request_id") == REQUEST_ID for body in cancels)

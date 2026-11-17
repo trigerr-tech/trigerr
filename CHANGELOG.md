@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Position manager: status checks and cancels now say whose order it is (request id, user id, strategy id), as placing
+  already did. Before, they relied on the caller's logging context, so a caller without one left the order service's
+  ledger notes for status and cancel untagged, and a search by request id missed them.
+
 ---
 
 ## [0.7.8] - 2026-11-15

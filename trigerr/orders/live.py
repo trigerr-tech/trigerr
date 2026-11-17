@@ -429,11 +429,13 @@ def find_live_order(idempotency_key, void=False):
         return None
 
 
-def order_status_now(credential_id, order_id, exchange):
-    """ One look at an order's status: the OMS's answer as it is, or None when there was none. No waiting, no retry. """
+def order_status_now(credential_id, order_id, exchange, request_id=None, user_id=None, strategy_id=None):
+    """ One look at an order's status: the OMS's answer as it is, or None when there was none. No waiting, no retry.
+    request_id, user_id and strategy_id say whose order it is; the OMS writes them on the order's ledger notes. """
     try:
         return post_to_oms("check_order_status", _add_correlation_fields(
-            {"credential_id": str(credential_id), "order_params": {"order_id": order_id, "exchange": exchange}}))
+            {"credential_id": str(credential_id), "order_params": {"order_id": order_id, "exchange": exchange}},
+            request_id, user_id, strategy_id))
     except Exception as e:
         print(f"Exception in Order Status Now : {e}")
         return None
